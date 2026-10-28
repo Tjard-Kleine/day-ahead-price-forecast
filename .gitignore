@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# environments
+.venv/
+venv/
+
+# data, model weights and training logs are not versioned
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+models/*
+!models/.gitkeep
+logs/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

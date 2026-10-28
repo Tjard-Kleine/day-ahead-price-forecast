@@ -1,0 +1,19 @@
+name: spotforecast
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python>=3.11
+  - pandas<3
+  - torchvision  # will install tensorboard as well
+  - pytorch
+  - tensorboard
+  - scikit-learn
+  - nbformat
+  - ipykernel
+  - pyarrow
+  - plotly
+  - matplotlib
+  - pip
+  - pip:
+      - -e .

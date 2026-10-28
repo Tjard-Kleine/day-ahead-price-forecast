@@ -1,0 +1,23 @@
+# LSTM model for the 48h day-ahead forecast of the German spot price
+
+model_name = "energy_lstm"
+
+# history features; "Spot" must stay first, the model uses it as residual anchor
+features = ["Spot", "solar", "solar_mean", "wind_mean", "onshore wind", "solar capacity"]
+# the first entry is the forecast target, the others are covariates known for the forecast horizon
+targets = ["Spot", "wind_mean", "solar_mean"]
+
+stride = 2
+forecast_history = 192
+forecast_horizon = 48
+batch_size = 64
+
+lr = 1e-4
+weight_decay = 1e-4
+epochs = 70
+
+[net_params]
+hidden_dim = 256
+dropout_p = 0.5
+num_layers = 3
+bidirectional = true
