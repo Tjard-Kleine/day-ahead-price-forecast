@@ -134,7 +134,7 @@ The final model can only forecast days of the dataset, because it needs the meas
 configs/          lstm.toml (model and training), data.toml (preprocessing, splits), feature_selection.toml
 src/spotforecast/ data/ (preprocessing, features, windows), models/ (LSTM, baselines), train, evaluate, tune,
                   final, predict
-scripts/          feature selection, run comparison, figures, model export, feature importance
+scripts/          feature selection, run comparison, figures, model export
 notebooks/        sanity checks, results
 models/final/     the three LSTMs of the final model
 reports/          test results and figures

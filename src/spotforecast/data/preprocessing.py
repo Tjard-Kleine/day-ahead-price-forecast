@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import datetime as dt
-from datetime import time
 
 
 def index_is_valid(idx:pd.Index):
@@ -312,23 +311,6 @@ def interpolate_col(data:pd.DataFrame, col, method:str="flat", inplace:bool=True
             data = interpolate_series(data, col, method, inplace=inplace, **kwargs)
 
     return data
-
-
-def list_to_time(time_vals:list[int]) -> time:
-    """
-    Transforms a list of integers into a datetime.time object.
-    
-    :param list time_vals:  list of values for hour, minute, second and microsecond. 
-                            Must respect the range of each unit.
-    """
-    n = len(time_vals)
-    if n < 4:
-        time_vals2 = time_vals + [0] * (4 - n)
-    else:
-        time_vals2 = time_vals[0:4]
-    names = ["hour", "minute", "second", "microsecond"]
-    vals = dict(zip(names, time_vals2))
-    return time(**vals)
 
 
 def preprocess_ts_data(data: pd.DataFrame,

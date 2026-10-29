@@ -8,7 +8,7 @@ import pandas as pd
 from datetime import datetime
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
-from torch.optim.lr_scheduler import LRScheduler, CosineAnnealingLR, ReduceLROnPlateau
+from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 from typing import Callable, Optional
 from pathlib import Path
 
