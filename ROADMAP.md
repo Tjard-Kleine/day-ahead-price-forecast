@@ -108,9 +108,20 @@ The numbers are the average effect of adding the group to any combination withou
 - [x] Search on Colab, 50 trials (45 complete, 5 stopped early), one seed per trial: the configurations differ by 1 to 3 €/MWh, the seed noise is about ±0.4, so one seed is enough to find the good region. Not extended to 100, because the top is flat.
 - Result: the 10 best trials lie within 0.15 €/MWh (18.16 to 18.31); the current config (trial 0) is 6th with 18.23. The top shares batch size 16, hidden size 256, 2 layers, dropout 0.2 to 0.45, lr 4e-4 to 1.2e-3 and a small weight decay. By Optuna's importance, weight decay (0.55) and lr (0.22) explain most of the differences, mainly because large weight decays and extreme learning rates are bad. The loss has an importance of 0: the MSE trials were bad because of their other settings, so Huber is not proven better, it just does not hurt.
 - All trials ran with seed 1, which is a lucky seed for the current config: 18.23 against its 3-seed mean of 18.68. The 3-seed means of the finalists will likely be about as high, so probably none of them passes rule 3.
-- [ ] Train the 5 best trials with 3 seeds each (`--summary` prints them). Near the top the trials differ by less than the seed noise, and the best of many noisy trials looks better than it is. The finalist with the best 3-seed mean replaces the current config only if it beats 18.68 ± 0.43 by rule 3.
+- [x] The 5 best trials with 3 seeds each. Near the top the trials differ by less than the seed noise, and the best of many noisy trials looks better than it is, so only the 3-seed mean counts:
+
+| Finalist | Val MAE, 3 seeds | vs current config (18.68) | Trial value (seed 1) |
+|---|---|---|---|
+| Trial 28: batch 16, history 168, dropout 0.20, 2 layers | 18.38 ± 0.54 | −0.30 | 18.22 |
+| Trial 18: batch 16, dropout 0.39, 3 layers | 18.41 ± 0.60 | −0.27 | 18.17 |
+| Trial 44: batch 16, dropout 0.38, 2 layers | 18.48 ± 0.43 | −0.20 | 18.17 |
+| Trial 22 (best trial of the search) | 18.48 ± 0.35 | −0.20 | 18.16 |
+| Trial 25: batch 16, dropout 0.26, 2 layers | 18.60 ± 0.33 | −0.08 | 18.23 |
+
+- [x] Decision: **the current config stays.** No finalist is 0.5 €/MWh better (rule 3). With 3 seeds every trial is 0.2 to 0.4 worse than with seed 1 alone, and the best trial of the search falls to 4th place. Further tuning of the hyperparameters brings nothing measurable.
 - [ ] LightGBM tuned as a second model; Ridge with the selected features is the bar (20.4).
-- [ ] Ensemble: the mean of the forecasts of several LSTM seeds, possibly with Ridge or LightGBM. It averages out the seed noise the search shows and likely brings more than the last tenths from tuning.
+- [x] Code: `python -m spotforecast.evaluate --ensemble` averages the forecasts of the runs in `models/` that have the features of `configs/lstm.toml`. It shows three variants: the 3 seeds of the current config, all 18 runs with these features (the current config and the 5 finalists), and the mean of all of them with Ridge, with a fixed 50/50 weight so that nothing is fitted on the validation split.
+- [ ] Run it on Colab — **next step**. Averaging smooths out the seed noise; LSTM and Ridge make different errors (the LSTM is better at night, Ridge during the day), so their mean may help most. A test with three short CPU runs gave 20.4 for the LSTMs, 20.4 for Ridge and 18.7 for their mean. The ensemble is a fixed combination of existing runs and has no seed noise; it is adopted if it is at least 0.5 better than the single runs (18.68). The 18-run variant contains the finalists chosen on the validation split and is therefore slightly flattered; the seed ensemble is not.
 
 | Hyperparameter | Search range | Current config |
 |---|---|---|
@@ -159,11 +170,19 @@ Then, in a new cell, the best trials and the options of the 5 best:
 Copy the printed `candidates = [...]` list into a cell and train every finalist with 3 seeds (15 runs, about 10 minutes):
 
 ```python
-candidates = [...]   # from the summary
+candidates = [...]   # replace [...] by the list from the summary
 for best in candidates:
     for s in [1, 2, 3]:
         !python -m spotforecast.train --seed {s} {best}
 !python scripts/compare_runs.py
+```
+
+Step 6, the ensemble of the trained runs (a few minutes, nothing is trained):
+
+```python
+%cd /content/day-ahead-price-forcast
+!git pull
+!python -m spotforecast.evaluate --ensemble
 ```
 
 ## Expected accuracy

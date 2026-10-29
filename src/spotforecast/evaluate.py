@@ -3,8 +3,11 @@
     python -m spotforecast.evaluate                 # newest run in models/ on the validation split
     python -m spotforecast.evaluate --run <name>    # a specific run
     python -m spotforecast.evaluate --split test    # only once, for the final result
+    python -m spotforecast.evaluate --ensemble      # mean forecasts of the runs with the features of configs/lstm.toml
 """
 import argparse
+import contextlib
+import io
 import json
 from typing import Callable, Optional
 
@@ -96,22 +99,60 @@ def load_run(run: str, device: torch.device) -> tuple[EnergyLSTMNet, dict]:
     return model, info["config"]
 
 
+def runs_with_features(config: dict) -> dict[str, dict]:
+    """The runs in models/ that were trained on the features, targets and forecast horizon of the config, with their
+    configs."""
+    runs = {}
+    for path in sorted(MODEL_DIR.glob("*.json")):
+        with open(path) as f:
+            run_config = json.load(f)["config"]
+        if path.with_suffix(".pth").exists() and all(run_config.get(k) == config[k]
+                                                      for k in ["features", "targets", "forecast_horizon"]):
+            runs[path.stem] = run_config
+    return runs
+
+
+def mean_forecast(runs: dict[str, dict], data_config: dict, split: str, device: torch.device
+                  ) -> tuple[np.ndarray, pd.DatetimeIndex]:
+    """The mean of the scaled spot price forecasts of several runs with the same features, and the forecast days. The
+    runs may differ in their history length, the days they forecast are the same."""
+    datasets, preds, days = {}, [], None
+    for run, run_config in runs.items():
+        history = run_config["forecast_history"]
+        if history not in datasets:
+            with contextlib.redirect_stdout(io.StringIO()):  # the preprocessing log is long
+                _, valid_ds, test_ds = load_datasets(run_config, data_config)
+            datasets[history] = valid_ds if split == "val" else test_ds
+        ds = datasets[history]
+        if days is not None and not days.equals(ds.forecast_starts()):
+            raise ValueError(f"Run {run} forecasts other days than the runs before it")
+        days = ds.forecast_starts()
+        model, _ = load_run(run, device)
+        preds.append(predict(model, ds, device)[0])
+    return np.mean(preds, axis=0), days
+
+
 def main():
     parser = argparse.ArgumentParser(description="Compares a trained run with the baselines, errors in EUR/MWh.")
     parser.add_argument("--run", help="name of a run in models/, default: the newest one")
     parser.add_argument("--split", choices=["val", "test"], default="val",
                         help="compare models and features on 'val', use 'test' only once at the very end")
+    parser.add_argument("--ensemble", action="store_true",
+                        help="instead of a single run: the mean forecasts of the runs in models/ with the features of "
+                             "configs/lstm.toml, once of the seeds of its exact config and once of all these runs")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    run = args.run or latest_run()
+    data_config = load_config("data")
+    run = None if args.ensemble else args.run or latest_run()
     if run is not None:
         model, config = load_run(run, device)
     else:
-        print("No trained run in models/, evaluating only the baselines.")
+        if not args.ensemble:
+            print("No trained run in models/, evaluating only the baselines.")
         config = load_config("lstm")
 
-    train_ds, valid_ds, test_ds = load_datasets(config, load_config("data"))
+    train_ds, valid_ds, test_ds = load_datasets(config, data_config)
     ds = valid_ds if args.split == "val" else test_ds
     X, Y = stack_windows(ds)
     y = Y[:, :, 0]
@@ -124,6 +165,23 @@ def main():
     for name, forecast in forecasts.items():
         results[name] = compute_metrics(forecast(X, Y), y, ds)
         results[name]["future_gain_eur"] = future_shuffle_gain(forecast, X, Y, ds)
+
+    if args.ensemble:
+        # averaging the forecasts of several runs smooths out the noise of the single runs
+        runs = runs_with_features(config)
+        without_seed = lambda c: {k: v for k, v in c.items() if k != "seed"}
+        seeds = {r: c for r, c in runs.items() if without_seed(c) == without_seed(config)}
+        ensembles = {}
+        for name, members in [(f"lstm, seeds of the config ({len(seeds)} runs)", seeds),
+                              (f"lstm, all runs with these features ({len(runs)})", runs)]:
+            if members:
+                ensembles[name], days = mean_forecast(members, data_config, args.split, device)
+                if not days.equals(ds.forecast_starts()):
+                    raise ValueError("The runs forecast other days than the baselines")
+                results[name] = compute_metrics(ensembles[name], y, ds)
+        if runs:
+            all_runs = list(ensembles.values())[-1]
+            results["mean of all these runs and ridge"] = compute_metrics((all_runs + forecasts["ridge"](X, Y)) / 2, y, ds)
 
     table = pd.DataFrame(results).T
     print(f"\n{args.split} split, errors in EUR/MWh (mse_z: scaled space of the training loss, future_gain_eur: growth "

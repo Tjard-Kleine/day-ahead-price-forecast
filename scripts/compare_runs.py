@@ -1,7 +1,8 @@
 """Summarizes logs/experiments.csv: one row per configuration with the mean and std of its runs over the seeds.
 
 Only the runs of the current task (forecast horizon of configs/lstm.toml) and only the config values that differ
-between the runs are shown; feature lists as the names added (+) or missing (-) compared to configs/lstm.toml.
+between the runs are shown. The features are shown as the groups of configs/feature_selection.toml a run used, plus
+the names outside of these groups that it added (+) or left out (-).
 
     python scripts/compare_runs.py
 """
@@ -17,20 +18,30 @@ METRICS = ["val_mae_eur", "val_rmse_eur", "train_mae_eur", "val_future_gain_eur"
 OPTION_DEFAULTS = {"loss": "mse", "huber_delta": 1.0, "early_stopping_patience": 0, "zero_init_output": False}
 
 
-def difference(value: str, base: list[str]) -> str:
-    """The names of a "|"-joined list that are added to or missing from the base list."""
-    names = value.split("|")
-    changes = [f"+{n}" for n in names if n not in base] + [f"-{n}" for n in base if n not in names]
-    return " ".join(changes) or "as config"
+def feature_label(features: str, targets: str, selection: dict) -> str:
+    """The feature groups that a run used, e.g. "calendar+residual_load", from its "|"-joined features and targets."""
+    features, targets = features.split("|"), targets.split("|")
+    groups = selection["groups"]
+    used = [name for name, group in groups.items()
+            if set(group["features"]) <= set(features) and set(group["future"]) <= set(targets)]
+    known = set(selection["base_features"] + selection["base_targets"])
+    known |= {f for name in used for f in groups[name]["features"] + groups[name]["future"]}
+    added = [f"+{f}" for f in dict.fromkeys(features + targets) if f not in known]
+    missing = [f"-{f}" for f in dict.fromkeys(selection["base_features"] + selection["base_targets"])
+               if f not in features + targets]
+    return " ".join(["+".join(used) or "base"] + added + missing)
 
 
 def main():
     base = load_config("lstm")
+    selection = load_config("feature_selection")
     log = pd.read_csv(EXPERIMENT_LOG)
-    log = log[log["forecast_horizon"] == base["forecast_horizon"]]
-    log = log.fillna({k: v for k, v in OPTION_DEFAULTS.items() if k in log.columns})
-    for key in ["features", "targets"]:
-        log[key] = log[key].map(lambda value: difference(value, base[key]))
+    log = log[log["forecast_horizon"] == base["forecast_horizon"]].copy()
+    for key, default in OPTION_DEFAULTS.items():
+        if key in log.columns:
+            log[key] = [default if pd.isna(value) else value for value in log[key]]
+    log["features"] = [feature_label(f, t, selection) for f, t in zip(log["features"], log["targets"])]
+    log = log.drop(columns="targets")
 
     config_cols = [c for c in log.columns if c not in RUN_COLUMNS and not c.startswith(("train_", "val_"))]
     keys = log[[c for c in config_cols if log[c].astype(str).nunique() > 1]].astype(str)
