@@ -9,6 +9,7 @@ import argparse
 import contextlib
 import io
 import json
+from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
@@ -90,12 +91,12 @@ def latest_run() -> Optional[str]:
     return max(runs, key=lambda p: p.stat().st_mtime).stem if runs else None
 
 
-def load_run(run: str, device: torch.device) -> tuple[EnergyLSTMNet, dict]:
+def load_run(run: str, device: torch.device, model_dir: Path=MODEL_DIR) -> tuple[EnergyLSTMNet, dict]:
     """Rebuilds a trained run with the model config it was trained with."""
-    with open(MODEL_DIR / f"{run}.json") as f:
+    with open(model_dir / f"{run}.json") as f:
         info = json.load(f)
     model = build_model(info["config"], *info["feature_dims"]).to(device)
-    load_model(model_path=MODEL_DIR / f"{run}.pth", model=model, optimizer=None, device=device, with_opt=False)
+    load_model(model_path=model_dir / f"{run}.pth", model=model, optimizer=None, device=device, with_opt=False)
     model.eval()
     return model, info["config"]
 

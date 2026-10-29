@@ -17,6 +17,7 @@ dependencies:
   - holidays
   - lightgbm
   - optuna
+  - pytest
   - pip
   - pip:
       - -e .

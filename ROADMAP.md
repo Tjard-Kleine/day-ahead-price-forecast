@@ -4,7 +4,20 @@ Working plan from the first trained LSTM to a tested day-ahead price forecast. S
 
 ## Where things stand
 
-Day-ahead task: at 12:00 on D-1 the 24 prices of D are forecast, with the measured values of day D (weather, wind, solar, residual load) as perfect forecasts. Validation split Q4 2024 (91 days), errors in €/MWh:
+Day-ahead task: at 12:00 on D-1 the 24 prices of D are forecast, with the measured values of day D (weather, wind, solar, residual load) as perfect forecasts.
+
+**Final result on the test split Q1 2025** (89 days, evaluated once, `reports/test_results.md`), errors in €/MWh:
+
+| Forecast | MAE | RMSE | Median error | Hours within 10 / 20 €/MWh |
+|---|---|---|---|---|
+| Day D-1 | 29.0 | 45.3 | 17.7 | 33 % / 54 % |
+| Ridge | 15.6 | 24.8 | 11.7 | 43 % / 74 % |
+| LSTM, mean of 3 seeds | 15.5 | 24.1 | 10.7 | 48 % / 73 % |
+| **Final model: LSTM mean + Ridge** | **13.9** | **22.9** | **9.5** | **52 % / 78 %** |
+
+The final model halves the error of day D-1 (−52 %) and beats Ridge by 1.7 €/MWh (−11 %); both differences are significant (Diebold-Mariano, p ≤ 0.0001).
+
+Validation split Q4 2024 (91 days), errors in €/MWh:
 
 | Model | MAE | RMSE |
 |---|---|---|
@@ -156,13 +169,22 @@ Done when the best model is chosen. It does not have to be the LSTM.
 
 - [x] Freeze the final model and the procedure before the test split is touched (step 6).
 - [x] Code: `python -m spotforecast.final` retrains the final model on train + validation (the validation quarter holds the most recent prices and the December spikes) and evaluates it once on the test split. Without a validation split there is no early stopping: every LSTM trains for the median best epoch of the validation runs of the config and keeps its last epoch; the learning rate schedule follows the training loss. Ridge is refitted on the same data. The report goes to `reports/test_results.md`: the baselines, Ridge, the single seeds, their mean and the final model, with the error distribution and Diebold-Mariano tests against Ridge, the LSTM mean and day D-1. The final models are saved in `models/final/`, apart from the validation runs. When the report exists, the command only shows it, a second evaluation needs `--force`.
-- [ ] Dry run on Colab — **next step**: `--dry-run` runs the same procedure on train → validation and saves nothing. It checks that everything runs and that the fixed number of epochs keeps the validation result of the early-stopped runs (17.6). If it is clearly worse (by more than about 0.5), the procedure is changed before the test split is touched.
-- [ ] Evaluate once on the test split (Q1 2025). Expectation: Q1 2025 was calmer than Q4 2024, so a MAE of about 14 to 15 €/MWh and a scaled MSE of about 0.5 to 0.6.
-- [ ] Report: comparison with the baselines, error per hour of the day and per price level, the distribution of the errors (median, share of hours within 10 and 20 €/MWh), the spike days separately, a Diebold-Mariano test against Ridge. State clearly that the inputs of day D are perfect forecasts.
+- [x] Dry run on Colab (`--dry-run`: the same procedure on train → validation, nothing saved). With a fixed 17 epochs the final model reaches **17.6** on the validation split, exactly the result of the early-stopped runs, so the procedure without early stopping works. It is also the more honest validation number, because no epoch was chosen on the validation split. Single seeds 18.7 / 18.9 / 19.2, their mean 18.5; median error of the final model 9.5 €/MWh, 52 % of the hours within 10 and 80 % within 20 €/MWh. Diebold-Mariano: the final model is more accurate than Ridge (p < 0.0001), than the LSTM mean alone (p = 0.011) and than day D-1 (p < 0.0001).
+- [x] Evaluated once on the test split (Q1 2025), report in `reports/test_results.md` (committed, so the guard against a second evaluation works in every clone). The expectation written down before was a MAE of 14 to 15 €/MWh and a scaled MSE of 0.5 to 0.6:
+  - **MAE 13.9 €/MWh**, slightly better than expected; RMSE 22.9, **scaled MSE 0.34**, much better than expected, because Q1 2025 had no spike like the December Dunkelflaute (RMSE only 1.6 times the MAE, on the validation split 2.7 times).
+  - −52 % against day D-1 (29.0), −11 % against Ridge (15.6); Diebold-Mariano p ≤ 0.0001 for both.
+  - **The LSTM alone is no better than Ridge on the test split** (15.5 against 15.6), while it was 2.0 better on the validation split. Only the combination wins clearly. The two models are complementary: the LSTM is much better at night (7.1 against 11.5), Ridge around midday (18.4 against 21.5).
+  - The single seeds spread from 14.9 to 17.2 on the test split, much more than on the validation split. A single LSTM would have been a gamble; averaging the seeds and Ridge made the result robust.
+  - The error distribution is the same as on the validation split (median 9.5, 52 % within 10 €/MWh); the lower MAE comes from fewer extreme hours.
+- [x] Report: comparison with the baselines, error per block of hours, the distribution of the errors (median, share of hours within 10 and 20 €/MWh), Diebold-Mariano tests, the note that the inputs of day D are perfect forecasts (`reports/test_results.md`).
+- [x] The model as a usable command: `python -m spotforecast.predict --date <day> [--plot]` forecasts the 24 prices of a day with the final model (the LSTMs in `models/final/`, Ridge refitted deterministically on train + validation; checked: it reproduces the Ridge of the test report exactly). It says whether the day was seen in training; only test days are honest forecasts.
+- [x] Decisions: the final weights go into the repository (without optimizer state, 5.9 instead of 17.6 MB each, `scripts/export_final_models.py`, same forecasts); the dataset is not published, the README describes it; MIT license.
+- [x] Final models copied from Drive to `models/final/`, optimizer state removed (5.9 MB each), checked: they reproduce the test report exactly (final model 13.9, LSTM mean 15.5, Ridge 15.6). Figures in `reports/figures/`: forecasts of four test days and the error per hour of the day.
+- [x] Repository renamed to `Tjard-Kleine/day-ahead-price-forecast`.
 - [ ] Optional: probabilistic forecasts (e.g. the 10 %, 50 % and 90 % quantiles), which show when the model is unsure, e.g. before a Dunkelflaute.
 
 How to read the MAE (Ridge with the selected features on the validation split, MAE 20.4; the LSTM is about 10 % better): the median error is 11.8 €/MWh, 44 % of the hours are within 10 €/MWh and 73 % within 20. Without the spike days 11 and 12 December the MAE is 16.9, on these two days 173. By price level: 11 to 14 €/MWh for prices between 50 and 150, 77 above 150, 21 below 50.
-- [ ] README, LICENSE, tests that guard the split against leakage.
+- [x] README (task, data, model, development, results, limitations, usage), MIT LICENSE, tests against leakage (`python -m pytest tests`: windows end before their forecast day, splits do not overlap, the scaler sees only training rows, lags and calendar are correct; the tests that need the dataset are skipped without it).
 
 ## Colab runs
 
@@ -171,7 +193,7 @@ Push the code first; models/ and logs/ stay on Drive as before. A training run t
 Step 6, the search (about 20 to 30 minutes: with early stopping a trial takes 15 to 35 seconds on the Colab GPU). If Colab disconnects, run the same cell again, the search continues where it stopped. `--trials 100` would extend the same search to 100 trials:
 
 ```python
-%cd /content/day-ahead-price-forcast
+%cd /content/day-ahead-price-forecast
 !git pull
 !pip install -q -e .
 !python -m spotforecast.tune --trials 50
@@ -197,7 +219,7 @@ for best in candidates:
 Step 6, the ensemble of the trained runs (a few minutes, nothing is trained):
 
 ```python
-%cd /content/day-ahead-price-forcast
+%cd /content/day-ahead-price-forecast
 !git pull
 !python -m spotforecast.evaluate --ensemble
 ```
@@ -205,15 +227,16 @@ Step 6, the ensemble of the trained runs (a few minutes, nothing is trained):
 Step 7, first the dry run on train → validation (about 2 minutes, nothing is saved, the test split is not touched):
 
 ```python
-%cd /content/day-ahead-price-forcast
+%cd /content/day-ahead-price-forecast
 !git pull
 !python -m spotforecast.final --dry-run
 ```
 
-Then, only if the dry run is fine and only once, the evaluation on the test split:
+Then, only if the dry run is fine and only once, the evaluation on the test split. The report is printed and written to `reports/test_results.md` of the Colab copy; copy it to Drive, then commit it to the repository:
 
 ```python
 !python -m spotforecast.final
+!cp reports/test_results.md /content/drive/MyDrive/spotforecast/
 ```
 
 ## Expected accuracy
@@ -230,5 +253,5 @@ Validation MAE in €/MWh, with the inputs of day D as perfect forecasts:
 
 - Tuning brought nothing measurable, the ensemble with Ridge brought 1.2 €/MWh. The estimate of 17–18.5 after step 6 held.
 - The scaled validation MSE of the ensemble is 1.45 (RMSE 47.1). It will hardly fall below 1 unless a model foresees the December spikes.
-- The test quarter Q1 2025 was calmer. Expect a test MAE about 15 to 20 % lower and a test MSE of roughly 0.5 to 0.6.
+- Test split Q1 2025, measured once: **MAE 13.9** (expected 14 to 15), scaled MSE 0.34 (expected 0.5 to 0.6); 21 % below the validation MAE of 17.6, the calmer quarter as expected.
 - With real forecasts instead of measured values, the error would be several €/MWh higher.

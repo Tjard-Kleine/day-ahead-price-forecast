@@ -1,0 +1,54 @@
+{
+  "config": {
+    "model_name": "energy_lstm",
+    "features": [
+      "Spot",
+      "solar",
+      "solar_mean",
+      "wind_mean",
+      "onshore wind",
+      "solar capacity",
+      "saturday",
+      "sunday",
+      "holiday",
+      "residual load",
+      "offshore wind",
+      "Spot Gas EEX THE Day Ahead_lag24",
+      "Spot coal_lag24",
+      "CO2 price GER_lag24"
+    ],
+    "targets": [
+      "Spot",
+      "wind_mean",
+      "solar_mean",
+      "saturday",
+      "sunday",
+      "holiday",
+      "residual load",
+      "onshore wind",
+      "offshore wind",
+      "solar"
+    ],
+    "forecast_history": 192,
+    "forecast_horizon": 24,
+    "batch_size": 64,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 17,
+    "early_stopping_patience": 0,
+    "loss": "huber",
+    "huber_delta": 1.0,
+    "seed": 2,
+    "net_params": {
+      "hidden_dim": 256,
+      "dropout_p": 0.5,
+      "num_layers": 3,
+      "bidirectional": false,
+      "zero_init_output": true
+    }
+  },
+  "feature_dims": [
+    18,
+    9
+  ]
+}
