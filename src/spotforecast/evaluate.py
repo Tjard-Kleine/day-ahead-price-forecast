@@ -6,7 +6,7 @@
 """
 import argparse
 import json
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
@@ -20,7 +20,8 @@ from spotforecast.models.lstm import EnergyLSTMNet, build_model
 from spotforecast.utils import load_model
 
 MODEL_DIR = PROJECT_ROOT / "models"
-HORIZON_BLOCKS = {"h1-6": slice(0, 6), "h7-24": slice(6, 24), "h25-48": slice(24, None)}
+# the forecast starts at midnight, so the horizon steps are the hours of the forecast day
+HORIZON_BLOCKS = {"00-06": slice(0, 6), "06-12": slice(6, 12), "12-18": slice(12, 18), "18-24": slice(18, 24)}
 
 
 def compute_metrics(pred: np.ndarray, y: np.ndarray, ds: EnergyDataset) -> dict[str, float]:
@@ -51,6 +52,32 @@ def predict(model: torch.nn.Module, ds: EnergyDataset, device: torch.device, bat
 
 def evaluate_model(model: torch.nn.Module, ds: EnergyDataset, device: torch.device) -> dict[str, float]:
     return compute_metrics(*predict(model, ds, device), ds)
+
+
+def model_forecast(model: torch.nn.Module, device: torch.device) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
+    """The model as a function of stacked windows (X, Y) that returns the scaled spot price forecasts."""
+    @torch.no_grad()
+    def forecast(X: np.ndarray, Y: np.ndarray) -> np.ndarray:
+        model.eval()
+        x, _ = split_history_future_batch_transform(torch.from_numpy(X), torch.from_numpy(Y), device, train=False)
+        return model(x).cpu().numpy()
+    return forecast
+
+
+def future_shuffle_gain(forecast: Callable[[np.ndarray, np.ndarray], np.ndarray], X: np.ndarray, Y: np.ndarray,
+                        ds: EnergyDataset, n_repeats: int=10, seed: int=1) -> float:
+    """How much the MAE in EUR/MWh grows when the inputs of the forecast day (the future covariates in Y) are shuffled
+    between the days, i.e. how much the forecast relies on them."""
+    if Y.shape[-1] == 1:
+        return 0.0
+    rng = np.random.default_rng(seed)
+    mae = compute_metrics(forecast(X, Y), Y[:, :, 0], ds)["mae_eur"]
+    shuffled = []
+    for _ in range(n_repeats):
+        Y_shuffled = Y.copy()
+        Y_shuffled[:, :, 1:] = Y[rng.permutation(len(Y)), :, 1:]
+        shuffled.append(compute_metrics(forecast(X, Y_shuffled), Y[:, :, 0], ds)["mae_eur"])
+    return float(np.mean(shuffled) - mae)
 
 
 def latest_run() -> Optional[str]:
@@ -90,12 +117,17 @@ def main():
     y = Y[:, :, 0]
 
     results = {name: compute_metrics(pred, y, ds) for name, pred in naive_forecasts(X, y.shape[1]).items()}
-    results["ridge"] = compute_metrics(fit_ridge(train_ds).predict(ridge_features(X, Y)), y, ds)
+    ridge = fit_ridge(train_ds)
+    forecasts = {"ridge": lambda X_, Y_: ridge.predict(ridge_features(X_, Y_))}
     if run is not None:
-        results[run] = evaluate_model(model, ds, device)
+        forecasts[run] = model_forecast(model, device)
+    for name, forecast in forecasts.items():
+        results[name] = compute_metrics(forecast(X, Y), y, ds)
+        results[name]["future_gain_eur"] = future_shuffle_gain(forecast, X, Y, ds)
 
     table = pd.DataFrame(results).T
-    print(f"\n{args.split} split, errors in EUR/MWh (mse_z: scaled space of the training loss)")
+    print(f"\n{args.split} split, errors in EUR/MWh (mse_z: scaled space of the training loss, future_gain_eur: growth "
+          f"of the MAE when the inputs of day D are shuffled)")
     print(table.round({c: 3 if c == "mse_z" else 1 for c in table.columns}).to_string())
 
 

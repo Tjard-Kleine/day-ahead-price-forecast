@@ -14,7 +14,7 @@ class EnergyLSTMNet(nn.Module):
     """
 
     def __init__(self, n_hist_features: int, n_future_features: int, forecast_horizon: int, hidden_dim: int,
-                 dropout_p: float, num_layers=2, bidirectional=False, rng: torch.Generator = None):
+                 dropout_p: float, num_layers=2, bidirectional=False, zero_init_output=False, rng: torch.Generator = None):
         super().__init__()
         self.forecast_horizon = forecast_horizon
         self.hidden_dim = hidden_dim
@@ -44,6 +44,10 @@ class EnergyLSTMNet(nn.Module):
 
         if rng is not None:
             self.apply(partial(init_weights_normal, generator=rng))
+        if zero_init_output:
+            # the untrained model then forecasts the last known price (persistence) instead of large random deviations
+            nn.init.zeros_(self.reg_layer.weight)
+            nn.init.zeros_(self.reg_layer.bias)
 
     def forward(self, x):
         hist_feats, future_feats = x
@@ -53,8 +57,10 @@ class EnergyLSTMNet(nn.Module):
 
         hist_feats = self.input_dropout(hist_feats)
 
-        lstm_out, _ = self.lstm(hist_feats)
-        last_out = lstm_out[:, -1, :]
+        # final states of the last layer: forward after the last hour and, if bidirectional, backward after the first
+        # hour. lstm_out[:, -1] would hold a backward state that has only seen the last hour
+        _, (h_n, _) = self.lstm(hist_feats)
+        last_out = torch.cat(list(h_n[-(2 if self.bidirectional else 1):]), dim=1)
         last_out = self.ln(last_out)
 
         combined_input = torch.cat([last_out, future_feats.flatten(start_dim=1)], dim=1)

@@ -1,6 +1,7 @@
 import argparse
 import json
 import subprocess
+import tomllib
 import torch
 import torch.nn as nn
 import pandas as pd
@@ -13,7 +14,9 @@ from pathlib import Path
 
 from spotforecast.config import PROJECT_ROOT, load_config
 from spotforecast.data.dataset import load_datasets, get_feature_dims, default_batch_transform, split_history_future_batch_transform
-from spotforecast.evaluate import MODEL_DIR, evaluate_model
+from spotforecast.data.features import add_feature_groups
+from spotforecast.evaluate import MODEL_DIR, evaluate_model, future_shuffle_gain, model_forecast
+from spotforecast.models.baselines import stack_windows
 from spotforecast.models.lstm import build_model
 from spotforecast.utils import seed_torch, load_model
 
@@ -21,8 +24,9 @@ EXPERIMENT_LOG = PROJECT_ROOT / "logs" / "experiments.csv"
 
 
 def fit(model, train_loader, val_loader, optimizer, criterion, epochs, writer, device, transform_batch_fn:Callable=default_batch_transform,
-        save_model_path: Optional[Path]=None, scheduler: Optional[LRScheduler]=None) -> int:
-    """Trains the model and returns the epoch with the best validation loss."""
+        save_model_path: Optional[Path]=None, scheduler: Optional[LRScheduler]=None, patience: int=0) -> int:
+    """Trains the model and returns the epoch with the best validation loss. With patience > 0 the training stops after
+    that many epochs without a better validation loss."""
     best_val_loss = torch.inf
     best_epoch = 0
     eps = 1e-4
@@ -71,7 +75,7 @@ def fit(model, train_loader, val_loader, optimizer, criterion, epochs, writer, d
 
         current_lr = optimizer.param_groups[0]['lr']
 
-        print(f"Epoch {epoch + 1}/{epochs} | Train MSE: {avg_train_loss:.4f} | Val MSE: {avg_val_loss:.4f} | LR: {current_lr:.2e}")
+        print(f"Epoch {epoch + 1}/{epochs} | Train loss: {avg_train_loss:.4f} | Val loss: {avg_val_loss:.4f} | LR: {current_lr:.2e}")
 
         if writer is not None:
             writer.add_scalar("Loss/Train", avg_train_loss, epoch)
@@ -85,7 +89,36 @@ def fit(model, train_loader, val_loader, optimizer, criterion, epochs, writer, d
             else:
                 scheduler.step()
 
+        if patience > 0 and epoch + 1 - best_epoch >= patience:
+            print(f"Early stopping: no better validation loss for {patience} epochs")
+            break
+
     return best_epoch
+
+
+def build_criterion(config: dict) -> nn.Module:
+    """The training loss of the config: "mse", or "huber", which grows only linearly for errors above huber_delta
+    (in the scaled space) and lets the price spikes weigh less."""
+    if config["loss"] == "huber":
+        return nn.HuberLoss(delta=config["huber_delta"])
+    return nn.MSELoss(reduction="mean")
+
+
+def apply_overrides(config: dict, overrides: list[str]) -> None:
+    """Sets config values in place from "key=value" strings, e.g. "lr=1e-3", "loss=huber" or
+    "net_params.dropout_p=0.2". The value is read as TOML, anything else is taken as a string."""
+    for override in overrides:
+        key, value = override.split("=", 1)
+        *parents, name = key.strip().split(".")
+        section = config
+        for parent in parents:
+            section = section[parent]
+        if name not in section:
+            raise KeyError(f"Unknown config key: {key}")
+        try:
+            section[name] = tomllib.loads(f"value = {value}")["value"]
+        except tomllib.TOMLDecodeError:
+            section[name] = value
 
 
 def log_experiment(run: str, config: dict, best_epoch: int, metrics: dict[str, dict[str, float]]):
@@ -115,6 +148,10 @@ def main():
     parser = argparse.ArgumentParser(description="Trains the LSTM described by configs/lstm.toml.")
     parser.add_argument("--seed", type=int, help="overrides the seed of the config, e.g. to measure the run-to-run noise")
     parser.add_argument("--epochs", type=int, help="overrides the number of epochs of the config, e.g. for a quick test")
+    parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                        help="overrides any config value, e.g. --set lr=1e-3 --set net_params.zero_init_output=true")
+    parser.add_argument("--groups", nargs="+", default=[], metavar="GROUP",
+                        help="adds feature groups of configs/feature_selection.toml, e.g. --groups calendar residual_load")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -126,6 +163,9 @@ def main():
         config["seed"] = args.seed
     if args.epochs is not None:
         config["epochs"] = args.epochs
+    apply_overrides(config, args.set)
+    config["features"], config["targets"] = add_feature_groups(config["features"], config["targets"],
+                                                               load_config("feature_selection")["groups"], args.groups)
 
     # N.B.: using `42` is never a good idea!
     seed_torch(config["seed"], reproducible=True)
@@ -154,14 +194,15 @@ def main():
         patience=3
     )
 
-    criterion = nn.MSELoss(reduction="mean")
+    criterion = build_criterion(config)
     batch_tsfm_fn = split_history_future_batch_transform
     save_model_path = MODEL_DIR / f"{run}.pth"
     with open(save_model_path.with_suffix(".json"), "w") as f:
         json.dump({"config": config, "feature_dims": [n_hist_features, n_future_features]}, f, indent=2)
 
     best_epoch = fit(model, train_loader, val_loader, optimizer, criterion, config['epochs'], writer, device,
-                     transform_batch_fn=batch_tsfm_fn, save_model_path=save_model_path, scheduler=scheduler)
+                     transform_batch_fn=batch_tsfm_fn, save_model_path=save_model_path, scheduler=scheduler,
+                     patience=config['early_stopping_patience'])
 
     print(f"Loading best model...\n")
     load_model(model_path=save_model_path, model=model, optimizer=optimizer, device=device)
@@ -170,9 +211,11 @@ def main():
 
     # without dropout, so that train and val errors are comparable
     metrics = {"train": evaluate_model(model, train_ds, device), "val": evaluate_model(model, valid_ds, device)}
+    metrics["val"]["future_gain_eur"] = future_shuffle_gain(model_forecast(model, device), *stack_windows(valid_ds), valid_ds)
     log_experiment(run, config, best_epoch, metrics)
     for split, m in metrics.items():
         print(f"{split:5}: MAE {m['mae_eur']:.1f} EUR/MWh, RMSE {m['rmse_eur']:.1f} EUR/MWh, MSE (scaled) {m['mse_z']:.3f}")
+    print(f"the val MAE grows by {metrics['val']['future_gain_eur']:.1f} EUR/MWh when the inputs of day D are shuffled")
     print(f"best epoch {best_epoch}, results added to {EXPERIMENT_LOG.relative_to(PROJECT_ROOT)}")
 
 

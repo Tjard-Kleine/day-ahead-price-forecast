@@ -1,0 +1,49 @@
+# Feature selection (scripts/select_features.py): every combination of the groups below is added to the features and
+# future covariates of configs/lstm.toml and evaluated with Ridge and LightGBM in rolling-origin folds.
+#
+# History features must be known at 12:00 on D-1. Prices, wind, solar and load count as known for all of D-1 (perfect
+# forecasts, see configs/lstm.toml). Values without a day-ahead forecast are shifted by 12 hours ("_lag12"), daily
+# prices by 24 hours ("_lag24"). Covariates of day D ("future") must have a day-ahead forecast or be known in advance.
+
+# validation folds [start, end): train on everything before the start, validate until the end. The last fold is the
+# validation split of configs/data.toml, the test split stays untouched
+folds = [
+    ["2024-01-01 00:00:00", "2024-04-01 00:00:00"],
+    ["2024-04-01 00:00:00", "2024-07-01 00:00:00"],
+    ["2024-07-01 00:00:00", "2024-10-01 00:00:00"],
+    ["2024-10-01 00:00:00", "2025-01-01 00:00:00"],
+]
+# a group is kept if it lowers the mean MAE over the folds by at least min_gain (EUR/MWh) and is better in at least
+# min_better_folds folds
+min_gain = 0.1
+min_better_folds = 3
+
+[groups.calendar]
+# weekends and public holidays have a lower demand
+features = ["saturday", "sunday", "holiday"]
+future = ["saturday", "sunday", "holiday"]
+
+[groups.residual_load]
+# demand minus wind and solar: what the other power plants have to cover, in the merit order it sets the price
+features = ["residual load"]
+future = ["residual load"]
+
+[groups.load]
+# the demand alone
+features = ["conso"]
+future = ["conso"]
+
+[groups.renewables]
+# the measured generation of wind and solar, next to the weather that drives it
+features = ["offshore wind"]
+future = ["onshore wind", "offshore wind", "solar"]
+
+[groups.fuel]
+# gas, coal and CO2 prices of the day before, they set the costs of the power plants at the margin
+features = ["Spot Gas EEX THE Day Ahead_lag24", "Spot coal_lag24", "CO2 price GER_lag24"]
+future = []
+
+[groups.conventional]
+# generation and trade without a forecast, at 12:00 on D-1 only known until about 12:00
+features = ["brown coal_lag12", "black coal_lag12", "natural gas_lag12", "cross-border trade_lag12"]
+future = []

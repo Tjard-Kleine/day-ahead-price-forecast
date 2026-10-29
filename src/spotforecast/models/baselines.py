@@ -13,14 +13,15 @@ def stack_windows(ds: EnergyDataset) -> tuple[np.ndarray, np.ndarray]:
 
 
 def naive_forecasts(X: np.ndarray, horizon: int) -> dict[str, np.ndarray]:
-    """Forecasts of the spot price (first history feature) that only repeat known values."""
+    """Forecasts of the spot price (first history feature) that only repeat known values. The history ends at
+    midnight before the forecast day D, so its last 24 hours are the prices of day D-1."""
     window = X.shape[1]
     j = np.arange(horizon)
     return {
         "mean": np.zeros((len(X), horizon), dtype=X.dtype),  # the training mean is 0 after scaling
         "persistence": np.repeat(X[:, -1:, 0], horizon, axis=1),
-        "same hour yesterday": X[:, window - 24 + (j % 24), 0],
-        "same hour last week": X[:, window - 168 + j, 0],
+        "day D-1": X[:, window - 24 + (j % 24), 0],
+        "day D-7": X[:, window - 168 + j, 0],
     }
 
 

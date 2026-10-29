@@ -14,6 +14,8 @@ dependencies:
   - pyarrow
   - plotly
   - matplotlib
+  - holidays
+  - lightgbm
   - pip
   - pip:
       - -e .

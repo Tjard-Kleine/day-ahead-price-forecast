@@ -1,20 +1,29 @@
-# LSTM model for the 48h day-ahead forecast of the German spot price
+# LSTM model for the day-ahead forecast of the German spot price: at 12:00 on day D-1, the day of the auction,
+# the 24 hourly prices of day D are forecast
 
 model_name = "energy_lstm"
 
-# history features; "Spot" must stay first, the model uses it as residual anchor
+# history features, the window ends at midnight before day D; "Spot" must stay first, the model uses it as residual anchor.
+# At 12:00 on D-1 the prices of all of D-1 are known (auction on D-2); the other features of the afternoon of D-1 are
+# treated as perfect forecasts like the weather below. A feature without a day-ahead forecast must not be added this way
 features = ["Spot", "solar", "solar_mean", "wind_mean", "onshore wind", "solar capacity"]
-# the first entry is the forecast target, the others are covariates known for the forecast horizon
-targets = ["Spot"]
+# the first entry is the forecast target, the others are covariates known for day D. wind_mean and solar_mean are
+# measured weather values used as perfect day-ahead forecasts, so the results are an upper bound for real forecasts
+targets = ["Spot", "wind_mean", "solar_mean"]
 
-stride = 2
 forecast_history = 192
-forecast_horizon = 48
+# the hours of day D, days with a clock change are skipped
+forecast_horizon = 24
 batch_size = 64
 
 lr = 1e-4
 weight_decay = 1e-4
 epochs = 70
+# stop after this many epochs without a better validation loss, 0 trains all epochs
+early_stopping_patience = 0
+# training loss, "mse" or "huber"; huber_delta is in the scaled space, 1 is about 39 EUR/MWh
+loss = "mse"
+huber_delta = 1.0
 # fixed for reproducibility, vary it (train --seed) to measure the run-to-run noise
 seed = 1
 
@@ -23,3 +32,5 @@ hidden_dim = 256
 dropout_p = 0.5
 num_layers = 3
 bidirectional = false
+# true: the untrained model starts at persistence (the last known price)
+zero_init_output = false
