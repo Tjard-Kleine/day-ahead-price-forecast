@@ -16,7 +16,9 @@ Day-ahead task: at 12:00 on D-1 the 24 prices of D are forecast, with the measur
 | Ridge, selected features | 20.4 | 48.1 |
 | LSTM reference (step 3), 3 seeds | 24.39 ± 0.15 | 53.9 |
 | LSTM with the training of step 4, base features | 23.55 ± 0.22 | 52.5 |
-| **LSTM, current config (step 5), 3 seeds** | **18.68 ± 0.43** | **48.6** |
+| LSTM, current config (step 5), 3 seeds | 18.68 ± 0.43 | 48.6 |
+| LSTM, mean forecast of 18 runs (step 6) | 18.0 | 48.0 |
+| **Mean of the 18 LSTM runs and Ridge, 50/50 (step 6)** | **17.5** | **47.1** |
 
 - All numbers are an upper bound for real forecasts, because the values of day D are measurements.
 - The validation quarter is volatile: mean price 102.6, std 70.6, max 936 €/MWh (Dunkelflaute on 11 and 12 December 2024). These two days make up more than half of the squared error.
@@ -121,7 +123,17 @@ The numbers are the average effect of adding the group to any combination withou
 - [x] Decision: **the current config stays.** No finalist is 0.5 €/MWh better (rule 3). With 3 seeds every trial is 0.2 to 0.4 worse than with seed 1 alone, and the best trial of the search falls to 4th place. Further tuning of the hyperparameters brings nothing measurable.
 - [ ] LightGBM tuned as a second model; Ridge with the selected features is the bar (20.4).
 - [x] Code: `python -m spotforecast.evaluate --ensemble` averages the forecasts of the runs in `models/` that have the features of `configs/lstm.toml`. It shows three variants: the 3 seeds of the current config, all 18 runs with these features (the current config and the 5 finalists), and the mean of all of them with Ridge, with a fixed 50/50 weight so that nothing is fitted on the validation split.
-- [ ] Run it on Colab — **next step**. Averaging smooths out the seed noise; LSTM and Ridge make different errors (the LSTM is better at night, Ridge during the day), so their mean may help most. A test with three short CPU runs gave 20.4 for the LSTMs, 20.4 for Ridge and 18.7 for their mean. The ensemble is a fixed combination of existing runs and has no seed noise; it is adopted if it is at least 0.5 better than the single runs (18.68). The 18-run variant contains the finalists chosen on the validation split and is therefore slightly flattered; the seed ensemble is not.
+- [x] Run on Colab. The ensemble is a fixed combination of existing runs and has no seed noise; it is adopted if it is at least 0.5 better than the single runs (18.68):
+
+| Ensemble | Val MAE | vs single runs | RMSE | MAE 00–06 | 06–12 | 12–18 | 18–24 |
+|---|---|---|---|---|---|---|---|
+| Ridge alone | 20.4 | | 48.1 | 12.1 | 20.4 | 26.7 | 22.2 |
+| LSTM, the 3 seeds of the current config | 18.4 | −0.28 | 48.4 | 8.1 | 19.6 | 25.5 | 20.5 |
+| LSTM, all 18 runs with these features | 18.0 | −0.68 | 48.0 | 8.2 | 18.9 | 25.0 | 20.0 |
+| **All 18 runs + Ridge, 50/50** | **17.5** | **−1.18** | **47.1** | 8.2 | 17.8 | 24.5 | 19.4 |
+
+- LSTM and Ridge make different errors: their mean keeps the LSTM's level at night and beats both during the day. MSE (scaled) 1.45, the best so far.
+- [ ] Measure "3 seeds + Ridge" — **next step** (`evaluate --ensemble` now shows "+ ridge" for every ensemble). The 18-run variant contains the finalists chosen on the validation split and is slightly flattered. If "3 seeds + Ridge" is within 0.5 of "18 runs + Ridge", the simpler one becomes the final model: nothing in it is chosen on the validation split, and step 7 has to retrain 3 runs instead of 18.
 
 | Hyperparameter | Search range | Current config |
 |---|---|---|
@@ -140,7 +152,9 @@ Done when the best model is chosen. It does not have to be the LSTM.
 
 ### 7. Final evaluation and write-up
 
-- [ ] Retrain the best model on train + validation and evaluate it once on the test split.
+- [ ] Freeze the final model (an ensemble of LSTM runs and Ridge, see step 6) and the procedure before the test split is touched.
+- [ ] Retrain it on train + validation (the validation quarter holds the most recent prices and the December spikes). Without a validation split there is no early stopping, so every LSTM run trains for a fixed number of epochs: the best epoch of its validation run. Ridge is refitted on the same data. Needs a small extension of `train.py`.
+- [ ] Evaluate it once on the test split (Q1 2025), together with the baselines and Ridge.
 - [ ] Report: comparison with the baselines, error per hour of the day and per price level, the distribution of the errors (median, share of hours within 10 and 20 €/MWh), the spike days separately, a Diebold-Mariano test against Ridge. State clearly that the inputs of day D are perfect forecasts.
 - [ ] Optional: probabilistic forecasts (e.g. the 10 %, 50 % and 90 % quantiles), which show when the model is unsure, e.g. before a Dunkelflaute.
 
@@ -194,8 +208,9 @@ Validation MAE in €/MWh, with the inputs of day D as perfect forecasts:
 | Measured: Ridge, base features | 24.4 | −36 % |
 | Measured: Ridge, selected features | 20.4 | −46 % |
 | Measured: LSTM, current config | 18.7 | −51 % |
-| Estimate after tuning (step 6), about ±1 | 17–18.5 | −51 to −55 % |
+| Measured: 18 LSTM runs + Ridge (step 6) | 17.5 | −54 % |
 
-- The scaled validation MSE of the current config is about 1.5 (RMSE 48.6). It will hardly fall below 1 unless a model foresees the December spikes.
+- Tuning brought nothing measurable, the ensemble with Ridge brought 1.2 €/MWh. The estimate of 17–18.5 after step 6 held.
+- The scaled validation MSE of the ensemble is 1.45 (RMSE 47.1). It will hardly fall below 1 unless a model foresees the December spikes.
 - The test quarter Q1 2025 was calmer. Expect a test MAE about 15 to 20 % lower and a test MSE of roughly 0.5 to 0.6.
 - With real forecasts instead of measured values, the error would be several €/MWh higher.

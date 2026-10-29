@@ -139,7 +139,8 @@ def main():
                         help="compare models and features on 'val', use 'test' only once at the very end")
     parser.add_argument("--ensemble", action="store_true",
                         help="instead of a single run: the mean forecasts of the runs in models/ with the features of "
-                             "configs/lstm.toml, once of the seeds of its exact config and once of all these runs")
+                             "configs/lstm.toml, of the seeds of its exact config and of all these runs, each also "
+                             "averaged with Ridge")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -171,17 +172,16 @@ def main():
         runs = runs_with_features(config)
         without_seed = lambda c: {k: v for k, v in c.items() if k != "seed"}
         seeds = {r: c for r, c in runs.items() if without_seed(c) == without_seed(config)}
-        ensembles = {}
+        ridge_pred = forecasts["ridge"](X, Y)
         for name, members in [(f"lstm, seeds of the config ({len(seeds)} runs)", seeds),
                               (f"lstm, all runs with these features ({len(runs)})", runs)]:
             if members:
-                ensembles[name], days = mean_forecast(members, data_config, args.split, device)
+                pred, days = mean_forecast(members, data_config, args.split, device)
                 if not days.equals(ds.forecast_starts()):
                     raise ValueError("The runs forecast other days than the baselines")
-                results[name] = compute_metrics(ensembles[name], y, ds)
-        if runs:
-            all_runs = list(ensembles.values())[-1]
-            results["mean of all these runs and ridge"] = compute_metrics((all_runs + forecasts["ridge"](X, Y)) / 2, y, ds)
+                results[name] = compute_metrics(pred, y, ds)
+                # LSTM and Ridge make different errors; a fixed 50/50 weight, so that nothing is fitted on the split
+                results[f"{name} + ridge"] = compute_metrics((pred + ridge_pred) / 2, y, ds)
 
     table = pd.DataFrame(results).T
     print(f"\n{args.split} split, errors in EUR/MWh (mse_z: scaled space of the training loss, future_gain_eur: growth "
