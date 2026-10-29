@@ -16,7 +16,6 @@ import itertools
 import time
 from pathlib import Path
 
-import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import RidgeCV
@@ -24,20 +23,9 @@ from sklearn.linear_model import RidgeCV
 from spotforecast.config import PROJECT_ROOT, load_config, load_data_config
 from spotforecast.data.dataset import build_datasets, load_preprocessed_data
 from spotforecast.data.features import add_feature_groups
-from spotforecast.models.baselines import ridge_features, stack_windows
+from spotforecast.models.baselines import fit_lgbm, predict_lgbm, ridge_features, stack_windows
 
 RESULTS = PROJECT_ROOT / "logs" / "feature_selection.csv"
-
-
-def lgbm_table(X: np.ndarray, Y: np.ndarray, n_lags: int=168) -> tuple[np.ndarray, np.ndarray]:
-    """One row per day and hour: the spot price of the last n_lags hours and all features of the last history hour
-    (the same for every hour of a day), then the hour, the price of the same hour on D-1 and D-7 and the future
-    covariates of that hour. A tree cannot pick the matching lag for an hour by itself, so those are added."""
-    n, horizon = Y.shape[:2]
-    hours = np.arange(horizon)
-    day_part = np.repeat(np.c_[X[:, -n_lags:, 0], X[:, -1, :]], horizon, axis=0)
-    hour_part = np.c_[np.tile(hours, n), X[:, -24 + hours, 0].reshape(-1), X[:, -168 + hours, 0].reshape(-1)]
-    return np.c_[day_part, hour_part, Y[:, :, 1:].reshape(n * horizon, -1)], Y[:, :, 0].reshape(-1)
 
 
 def fold_maes(df: pd.DataFrame, config: dict, features: list[str], targets: list[str], folds: list[list[str]],
@@ -55,11 +43,8 @@ def fold_maes(df: pd.DataFrame, config: dict, features: list[str], targets: list
         pred = ridge.predict(ridge_features(X_val, Y_val))
         maes["ridge"].append(float(np.abs(pred - Y_val[:, :, 0]).mean() * scale))
 
-        lgbm = lgb.LGBMRegressor(n_estimators=300, learning_rate=0.05, subsample=0.8, subsample_freq=1,
-                                 colsample_bytree=0.8, random_state=1, verbose=-1)
-        lgbm.fit(*lgbm_table(X_train, Y_train))
-        X_val_table, y_val_table = lgbm_table(X_val, Y_val)
-        maes["lgbm"].append(float(np.abs(lgbm.predict(X_val_table) - y_val_table).mean() * scale))
+        pred = predict_lgbm(fit_lgbm(X_train, Y_train), X_val, Y_val)
+        maes["lgbm"].append(float(np.abs(pred - Y_val[:, :, 0]).mean() * scale))
     return maes
 
 

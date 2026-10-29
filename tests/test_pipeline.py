@@ -65,8 +65,9 @@ def test_derived_features_need_their_sources():
     assert with_derived_features(["Spot", "forecast solar"]) == ["Spot", "forecast solar", "Spot_roll_168"]
 
 
-def test_v2_uses_only_what_is_known_at_noon_before_the_day():
-    config = load_config("lstm_v2")
+@pytest.mark.parametrize("name", ["lstm_v2", "lgbm_v2"])
+def test_v2_uses_only_what_is_known_at_noon_before_the_day(name):
+    config = load_config(name)
     measured = set(MEASURED) | {"residual load"}  # computed from measured values
     assert not measured & set(config["features"]), "measured values must be shifted, e.g. <column>_lag12"
     assert not (measured | set(NEIGHBOUR_PRICES)) & set(config["targets"][1:]), "no inputs of day D from the auction"

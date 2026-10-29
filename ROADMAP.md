@@ -236,17 +236,34 @@ Model v1 is good on normal days; its weak spots are price spikes, and it used me
 
   - **The groups matter much less than in phase 1**: the base already holds most of the information. Only the neighbours' prices of D-1 help robustly. The calendar, a strong group in phase 1, adds nothing any more; its effect is apparently already in the load forecast.
   - **LightGBM beats Ridge clearly** (14.8 against 16.1 with the base), unlike in phase 1: with almost 2000 training days the trees can learn the nonlinear merit order. LightGBM is a candidate for the v2 ensemble.
-- [ ] **V5. LSTM** — **on Colab, next step**: three candidates with the training settings of phase 1, 3 seeds each, compared with each other and with Ridge on the same information (`python -m spotforecast.evaluate --run <run>`):
-  1. the base (price and forecast residual load), the reference;
-  2. base + neighbour_prices + austria, the choice of LightGBM;
-  3. base + calendar + forecast_details + measured_lag12, the starting config of V2, close to the best simple combination of Ridge.
-  `configs/lstm_v2.toml` holds the base; the groups are added with `--selection feature_selection_v2 --groups ...`; the winner is written into the config afterwards. A run takes about 35 s per epoch on a laptop CPU, likely 2 to 5 minutes in all on the Colab GPU.
-- [ ] **V6. Ensemble and final evaluation**: the mean of the LSTM seeds with Ridge as in phase 1, and now also with LightGBM, which needs to become a model of the package (so far it only exists in the feature selection); frozen on the validation year, then evaluated once on the test period.
+- [x] **V5. LSTM** on Colab: three candidates with the training settings of phase 1, 3 seeds each (the base; base + neighbour_prices + austria, the choice of LightGBM; base + calendar + forecast_details + measured_lag12, the starting config of V2). For a fair comparison Ridge and LightGBM were then trained on the same training split (until March 2024) and evaluated on the whole validation year like the LSTM; the numbers of V4 come from expanding folds and are not comparable with these.
+
+| Features (MAE on the validation year, €/MWh) | LSTM, 3 seeds | Ridge | LightGBM, 1 seed |
+|---|---|---|---|
+| Base (price, forecast residual load) | **15.83 ± 0.21** | 16.56 | 15.16 |
+| + calendar, forecast_details, measured_lag12 | 15.97 ± 0.02 | 16.25 | 15.15 |
+| + neighbour_prices, austria | 17.06 ± 0.40 | 16.89 | **14.12** |
+
+  - **The base wins among the LSTMs**: neither group set is better, so `configs/lstm_v2.toml` keeps the base. With the neighbours' prices the LSTM overfits, its best epoch is about 9.
+  - **LightGBM is the best model of v2**: 0.7 €/MWh better than the LSTM with the same base, 1.7 better with the neighbours' prices and Austria (RMSE 29.2 against 30.6 of the LSTM base). Ridge stays 0.7 behind the LSTM.
+  - LightGBM is now a model of the package (`fit_lgbm`, `predict_lgbm` in `src/spotforecast/models/baselines.py`); the feature selection uses the same functions and reproduces its numbers exactly.
+- [ ] **V6. Ensemble and final evaluation** — **on Colab, next step**. Decision: LightGBM leads now; checked on the validation year is whether the mean with the 3 LSTM seeds (and Ridge) beats LightGBM alone by at least 0.5 €/MWh, with fixed equal weights so that nothing is fitted on the validation year. Then the winner is frozen and evaluated once on the test period.
+  - `configs/lgbm_v2.toml`: LightGBM with the base, the neighbours' prices and the Austrian forecasts, the mean of 3 seeds. `python -m spotforecast.evaluate --ensemble --config lstm_v2 --lgbm lgbm_v2` adds LightGBM alone, + Ridge, + the LSTM seeds and + both. A test checks its information set like that of the LSTM.
+  - Locally (no LSTM v2 models here, they are on Drive): the single seeds give 14.12, 14.14 and 14.06, their mean forecast **13.9** (RMSE 29.2); + Ridge 14.1 (RMSE 28.5). Fitting the 3 seeds takes about 30 seconds.
 - [ ] **V7. Report**: test results, figures, README (including the statement about the upper bound).
 - [ ] Research: when do the transmission system operators publish their day-ahead forecasts, before or after 12:00 on D-1? If after, the report has to say so.
 - Later: a live forecast for tomorrow (for the portfolio web view; needs `predict` without an actual price and the forecasts of tomorrow) and a regular retraining, because the market changes; fuel prices; power plant outages and the neighbours' load from ENTSO-E; a probability of price spikes.
 
 ## Colab runs of phase 2
+
+V6, LightGBM together with the 3 LSTM seeds of the base on the validation year (about 1 to 2 minutes; the LSTM models are on Drive, LightGBM is fitted in the cell). Push the code first:
+
+```python
+%cd /content/day-ahead-price-forcast
+!git pull
+!pip install -q -e .
+!python -m spotforecast.evaluate --ensemble --config lstm_v2 --lgbm lgbm_v2
+```
 
 V5, the three LSTM candidates of model v2 with 3 seeds each (9 runs, about 20 to 45 minutes on the GPU). The data comes with `git pull`, because `data/raw/smard.parquet` is in the repository:
 

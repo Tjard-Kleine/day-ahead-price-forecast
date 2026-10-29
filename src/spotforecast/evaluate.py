@@ -4,6 +4,7 @@
     python -m spotforecast.evaluate --run <name>    # a specific run
     python -m spotforecast.evaluate --split test    # only once, for the final result
     python -m spotforecast.evaluate --ensemble      # mean forecasts of the runs with the features of configs/lstm.toml
+    python -m spotforecast.evaluate --ensemble --config lstm_v2 --lgbm lgbm_v2    # model v2, also with LightGBM
 """
 import argparse
 import contextlib
@@ -20,7 +21,8 @@ from torch.utils.data import DataLoader
 
 from spotforecast.config import PROJECT_ROOT, load_config, load_data_config
 from spotforecast.data.dataset import EnergyDataset, load_datasets, split_history_future_batch_transform
-from spotforecast.models.baselines import fit_ridge, naive_forecasts, ridge_features, stack_windows
+from spotforecast.models.baselines import (fit_lgbm, fit_ridge, naive_forecasts, predict_lgbm, ridge_features,
+                                           stack_windows)
 from spotforecast.models.lstm import EnergyLSTMNet, build_model
 from spotforecast.utils import load_model
 
@@ -149,6 +151,16 @@ def mean_forecast(runs: dict[str, dict], data_config: dict, split: str, device: 
     return np.mean(preds, axis=0), days
 
 
+def lgbm_forecast(config: dict, split: str) -> tuple[np.ndarray, EnergyDataset]:
+    """The mean of the scaled spot price forecasts of LightGBM models, one per seed of the config, trained on the
+    training split with the features of the config, and the dataset they forecast."""
+    with contextlib.redirect_stdout(io.StringIO()):  # the preprocessing log is long
+        train_ds, valid_ds, test_ds = load_datasets(config, load_data_config(config))
+    ds = valid_ds if split == "val" else test_ds
+    (X_train, Y_train), (X, Y) = stack_windows(train_ds), stack_windows(ds)
+    return np.mean([predict_lgbm(fit_lgbm(X_train, Y_train, seed), X, Y) for seed in config["seeds"]], axis=0), ds
+
+
 def main():
     parser = argparse.ArgumentParser(description="Compares a trained run with the baselines, errors in EUR/MWh.")
     parser.add_argument("--run", help="name of a run in models/, default: the newest one")
@@ -160,6 +172,8 @@ def main():
                              "averaged with Ridge")
     parser.add_argument("--config", default="lstm",
                         help="the model config for --ensemble or without any run, e.g. lstm_v2 for the SMARD data")
+    parser.add_argument("--lgbm", help="with --ensemble: the config of a LightGBM model on the same data, e.g. lgbm_v2; "
+                                       "adds it alone and averaged with the LSTM seeds and Ridge")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -190,7 +204,7 @@ def main():
         # averaging the forecasts of several runs smooths out the noise of the single runs
         runs = runs_with_features(config)
         seeds = seed_runs(config)
-        ridge_pred = forecasts["ridge"](X, Y)
+        ridge_pred, seed_pred = forecasts["ridge"](X, Y), None
         for name, members in [(f"lstm, seeds of the config ({len(seeds)} runs)", seeds),
                               (f"lstm, all runs with these features ({len(runs)})", runs)]:
             if members:
@@ -200,6 +214,26 @@ def main():
                 results[name] = compute_metrics(pred, y, ds)
                 # LSTM and Ridge make different errors; a fixed 50/50 weight, so that nothing is fitted on the split
                 results[f"{name} + ridge"] = compute_metrics((pred + ridge_pred) / 2, y, ds)
+                if members is seeds:
+                    seed_pred = pred
+
+        if args.lgbm:
+            lgbm_config = load_config(args.lgbm)
+            lgbm_pred, lgbm_ds = lgbm_forecast(lgbm_config, args.split)
+            if not lgbm_ds.forecast_starts().equals(ds.forecast_starts()):
+                raise ValueError("LightGBM forecasts other days than the baselines")
+            # the scaler is fitted per column, so the spot price has the same scale with other features; checked anyway
+            scalers = lgbm_ds.target_scaler, ds.target_scaler
+            if not np.allclose(*[(s.mean_[0], s.scale_[0]) for s in scalers]):
+                raise ValueError("LightGBM scales the spot price differently from the LSTM")
+            name = f"lightgbm, {args.lgbm} ({len(lgbm_config['seeds'])} seeds)"
+            results[name] = compute_metrics(lgbm_pred, y, ds)
+            # equal fixed weights again, nothing is fitted on the split
+            results[f"{name} + ridge"] = compute_metrics((lgbm_pred + ridge_pred) / 2, y, ds)
+            if seed_pred is not None:
+                results[f"{name} + lstm seeds"] = compute_metrics((lgbm_pred + seed_pred) / 2, y, ds)
+                results[f"{name} + lstm seeds + ridge"] = compute_metrics((lgbm_pred + seed_pred + ridge_pred) / 3,
+                                                                          y, ds)
 
     table = pd.DataFrame(results).T
     print(f"\n{args.split} split, errors in EUR/MWh (mse_z: scaled space of the training loss, future_gain_eur: growth "
