@@ -15,7 +15,8 @@ from spotforecast.train import EXPERIMENT_LOG
 RUN_COLUMNS = ["time", "run", "commit", "seed", "best_epoch"]
 METRICS = ["val_mae_eur", "val_rmse_eur", "train_mae_eur", "val_future_gain_eur", "best_epoch"]
 # runs from before an option existed were trained like its default
-OPTION_DEFAULTS = {"loss": "mse", "huber_delta": 1.0, "early_stopping_patience": 0, "zero_init_output": False}
+OPTION_DEFAULTS = {"loss": "mse", "huber_delta": 1.0, "early_stopping_patience": 0, "zero_init_output": False,
+                   "exclude_days": "none"}
 
 
 def feature_label(features: str, targets: str, selection: dict) -> str:

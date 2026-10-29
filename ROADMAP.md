@@ -187,6 +187,26 @@ Done when the best model is chosen. It does not have to be the LSTM.
 How to read the MAE (Ridge with the selected features on the validation split, MAE 20.4; the LSTM is about 10 % better): the median error is 11.8 €/MWh, 44 % of the hours are within 10 €/MWh and 73 % within 20. Without the spike days 11 and 12 December the MAE is 16.9, on these two days 173. By price level: 11 to 14 €/MWh for prices between 50 and 150, 77 above 150, 21 below 50.
 - [x] README (task, data, model, development, results, limitations, usage), MIT LICENSE, tests against leakage (`python -m pytest tests`: windows end before their forecast day, splits do not overlap, the scaler sees only training rows, lags and calendar are correct; the tests that need the dataset are skipped without it).
 
+## Phase 2 (proposal): price spikes and more data
+
+The final model is good on normal days; its weak spots are price spikes. Phase 2 looks for their causes and the data that is missing.
+
+**Rule:** the test split Q1 2025 is used up. Its spike days (15 and 20 January 2025) must not guide the new features, otherwise it can no longer measure a new model honestly. The spikes are analysed on training and validation data only, and a new model needs a new, untouched test period, i.e. data after March 2025. The result of phase 1 (13.9 €/MWh) stays the honest result of model v1.
+
+First analysis (training and validation data, 2023 to 2024):
+- Spikes are rare and come in episodes: about 57 hours above 300 €/MWh in two years, mainly September 2023, late-summer evenings 2024 and the Dunkelflaute in November and December 2024. Most of them are in the evening (16:00 to 20:00).
+- The residual load does not explain them alone: in its top 10 % only 84 of 1755 hours are above 250 €/MWh.
+- Compared with other hours of high residual load, the spike hours have less wind (3.1 against 7.4 GW), twice the imports (11.7 against 5.8 GW), more gas, oil and pumped storage, but **less lignite and hard coal** (11.7 against 13.5 and 6.4 against 7.4 GW). The gas price is the same (43 against 42 €/MWh). This points to unavailable power plants and to the situation in the neighbouring countries, neither of which is in the data.
+- 26 June 2024 has prices up to 2326 €/MWh at night and in the evening of a summer day, which no fundamental explains.
+
+Proposed steps:
+- [x] Research 26 June 2024: on 25 June 2024 a technical failure at EPEX SPOT partially decoupled its markets from the European day-ahead market coupling (SDAC), so no cross-border capacity could be allocated for 26 June; in Germany the day-ahead price averaged about 492 €/MWh (the dataset gives exactly 492.0) and reached 2326 €/MWh in the morning and 1796 in the evening. The prices are no market outcome of supply and demand. To cite in the README: a primary source such as the EPEX SPOT communication or the SDAC incident report.
+- [x] Consequence: `exclude_days = ["2024-06-26"]` in `configs/lstm.toml`. The day is no training target of new runs any more (627 instead of 628 training days); it stays in the history of the following days, where its prices were known values, and in the evaluation. The final model of phase 1 was trained with it and stays unchanged (`predict` still reproduces it exactly, because its saved config has no `exclude_days`).
+- [ ] Research the causes of the Dunkelflaute spikes of November and December 2024 (Bundesnetzagentur, SMARD articles, press; was capacity withheld?).
+- [ ] Decide the goal: a better MAE, or catching spikes (probability of a price above e.g. 250 €/MWh, quantile forecasts). The Huber loss and the MAE deliberately weigh spikes little.
+- [ ] Data: power plant unavailability (ENTSO-E / REMIT), neighbouring countries' load, wind, solar, French nuclear availability and cross-border capacities (not their prices, which come from the same auction), real day-ahead forecasts; all from the ENTSO-E Transparency Platform (free API token). More history (from 2015) and newer data (from April 2025, the new test period) from SMARD.de.
+- [ ] New splits with a new test period after March 2025, then steps 1 to 7 again for model v2.
+
 ## Colab runs
 
 Push the code first; models/ and logs/ stay on Drive as before. A training run takes about one minute on the Colab GPU. In a Colab cell, `!` commands take Python variables in `{}`; no comments after `%cd`.

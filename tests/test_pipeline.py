@@ -103,6 +103,15 @@ def test_splits_do_not_overlap(splits):
 
 
 @needs_data
+def test_excluded_days_are_no_training_targets():
+    config = dict(load_config("lstm"), exclude_days=["2024-06-26"])
+    with contextlib.redirect_stdout(io.StringIO()):
+        train_ds, _, _ = load_datasets(config, load_config("data"))
+    days = set(train_ds.forecast_starts().strftime("%Y-%m-%d"))
+    assert "2024-06-26" not in days and {"2024-06-25", "2024-06-27"} <= days
+
+
+@needs_data
 def test_spot_in_the_history_equals_the_target(splits):
     for ds in splits.values():
         assert (ds.features[:, 0] - ds.target[:, 0]).abs().max() < 1e-5

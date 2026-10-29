@@ -119,7 +119,8 @@ def load_preprocessed_data(path: str, columns: list[str], preprocess_kwargs: dic
     return df
 
 
-def get_preprocessed_ts_data(path: str, features: list[str], targets: list[str], window_size: int, forecast_horizon: int, preprocess_kwargs: dict):
+def get_preprocessed_ts_data(path: str, features: list[str], targets: list[str], window_size: int, forecast_horizon: int,
+                             preprocess_kwargs: dict, exclude_days=()):
     _targets = [targets] if not isinstance(targets, list) else targets
     _datetime_col = preprocess_kwargs.get("datetime_col", "Date")
     _valid_cutoff_datetime = preprocess_kwargs.pop("valid_cutoff_datetime")
@@ -130,14 +131,15 @@ def get_preprocessed_ts_data(path: str, features: list[str], targets: list[str],
     print(f"Using features: {get_input_feature_names(features)}, using targets: {_targets}")
 
     return build_datasets(df, features, _targets, window_size, forecast_horizon, _datetime_col,
-                          _valid_cutoff_datetime, _test_cutoff_datetime)
+                          _valid_cutoff_datetime, _test_cutoff_datetime, exclude_days)
 
 
 def build_datasets(df: pd.DataFrame, features: list[str], targets: list[str], window_size: int, forecast_horizon: int,
-                   datetime_col: str, valid_cutoff_datetime: str, test_cutoff_datetime: str
+                   datetime_col: str, valid_cutoff_datetime: str, test_cutoff_datetime: str, exclude_days=()
                    ) -> tuple[EnergyDataset, EnergyDataset, EnergyDataset]:
     """Scales the hourly data with the statistics of the training split and cuts it into the windows of the
-    train, validation and test split. df may hold more columns than needed, e.g. for several feature sets."""
+    train, validation and test split. df may hold more columns than needed, e.g. for several feature sets. The
+    exclude_days ("YYYY-MM-DD") are left out of the training targets."""
     _features = with_derived_features(features)
     X_scaled, y_scaled, scaler_y, _train_end, _val_end = get_normalized_data(data=df,
                                                                              features=_features,
@@ -155,15 +157,19 @@ def build_datasets(df: pd.DataFrame, features: list[str], targets: list[str], wi
     _day = pd.Series(_dates.date)
     _hours_of_day = _day.map(_day.value_counts()).to_numpy()
     _day_starts = np.flatnonzero((_dates.hour == 0) & (_hours_of_day == 24))
+    # days whose prices are no market outcome are no training targets; they stay in the history of the following days,
+    # where they were known values, and in the evaluation
+    _excluded = _day.isin({pd.Timestamp(d).date() for d in exclude_days}).to_numpy()
+    _train_day_starts = _day_starts[~_excluded[_day_starts]]
 
-    def _split(start: int, end: Optional[int]) -> EnergyDataset:
+    def _split(start: int, end: Optional[int], day_starts: np.ndarray=_day_starts) -> EnergyDataset:
         # the history window may reach back into the previous split, the forecast targets all lie in [start, end)
         _start = max(start - window_size, 0)
-        _target_starts = _day_starts[_day_starts >= start] - _start
+        _target_starts = day_starts[day_starts >= start] - _start
         return EnergyDataset(X_scaled[_start:end], y_scaled[_start:end], window_size, forecast_horizon, _target_starts,
                              dates=_dates[_start:end], target_scaler=scaler_y)
 
-    train_ds = _split(0, _train_end)
+    train_ds = _split(0, _train_end, _train_day_starts)
     valid_ds = _split(_train_end, _val_end)
     test_ds = _split(_val_end, None)
 
@@ -179,6 +185,8 @@ def load_datasets(config: dict, data_config: dict) -> tuple[EnergyDataset, Energ
         window_size=config["forecast_history"],
         forecast_horizon=config["forecast_horizon"],
         preprocess_kwargs=dict(data_config["preprocessing"]),
+        # runs from before the option existed were trained on all days
+        exclude_days=config.get("exclude_days", []),
     )
 
 

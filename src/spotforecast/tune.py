@@ -83,7 +83,7 @@ def search(config: dict, data_config: dict, study_name: str, n_trials: int, devi
         # the history length is searched as well, the windows are cut once per length
         train_ds, valid_ds, _ = build_datasets(df, config["features"], config["targets"], forecast_history,
                                                config["forecast_horizon"], preprocess_kwargs.get("datetime_col", "Date"),
-                                               valid_cutoff, test_cutoff)
+                                               valid_cutoff, test_cutoff, config.get("exclude_days", []))
         return train_ds, valid_ds
 
     def objective(trial: optuna.Trial) -> float:

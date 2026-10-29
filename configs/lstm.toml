@@ -21,6 +21,10 @@ targets = ["Spot", "wind_mean", "solar_mean", "saturday", "sunday", "holiday", "
 forecast_history = 192
 # the hours of day D, days with a clock change are skipped
 forecast_horizon = 24
+# forecast days that are no training targets because their prices are no market outcome: on 2024-06-26 a technical
+# failure at EPEX SPOT decoupled the German market from the European day-ahead market coupling (SDAC) and the prices
+# reached 2326 EUR/MWh. Added after the final model of phase 1, which was trained with this day
+exclude_days = ["2024-06-26"]
 batch_size = 64
 
 # training settings of step 4: lr 1e-3 with early stopping, Huber loss and zero_init_output

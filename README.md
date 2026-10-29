@@ -54,6 +54,10 @@ irradiance. The dataset comes from a university course and is not part of this r
 load correspond to the public data of [SMARD.de](https://www.smard.de) (Bundesnetzagentur). To run the code, place it
 at `data/raw/energy_ger.parquet`; `configs/data.toml` lists the expected columns.
 
+On 26 June 2024 a technical failure decoupled the German market from the European day-ahead market coupling, and the
+prices reached 2326 €/MWh without any scarcity behind them. New models leave this day out of their training targets
+(`exclude_days` in `configs/lstm.toml`); the final model below was trained before this was found and includes it.
+
 | Split | Forecast days | Days |
 |---|---|---|
 | Training | 2023-01-09 to 2024-09-30 | 628 |

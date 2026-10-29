@@ -44,7 +44,8 @@ def fold_maes(df: pd.DataFrame, config: dict, features: list[str], targets: list
     maes = {"ridge": [], "lgbm": []}
     for start, end in folds:
         train_ds, valid_ds, _ = build_datasets(df, features, targets, config["forecast_history"],
-                                               config["forecast_horizon"], datetime_col, start, end)
+                                               config["forecast_horizon"], datetime_col, start, end,
+                                               config.get("exclude_days", []))
         (X_train, Y_train), (X_val, Y_val) = stack_windows(train_ds), stack_windows(valid_ds)
         scale = valid_ds.target_scaler.scale_[0]
 
