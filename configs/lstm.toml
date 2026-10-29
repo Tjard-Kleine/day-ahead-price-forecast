@@ -5,7 +5,7 @@ model_name = "energy_lstm"
 # history features; "Spot" must stay first, the model uses it as residual anchor
 features = ["Spot", "solar", "solar_mean", "wind_mean", "onshore wind", "solar capacity"]
 # the first entry is the forecast target, the others are covariates known for the forecast horizon
-targets = ["Spot", "wind_mean", "solar_mean"]
+targets = ["Spot"]
 
 stride = 2
 forecast_history = 192
@@ -20,6 +20,6 @@ seed = 1
 
 [net_params]
 hidden_dim = 256
-dropout_p = 0.2
+dropout_p = 0.5
 num_layers = 3
-bidirectional = true
+bidirectional = false
