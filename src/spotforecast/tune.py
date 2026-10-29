@@ -6,8 +6,8 @@ early. The trials are stored in logs/optuna_<study>.log, so a search that was in
 continues when it is started again. Trials save no weights and are not added to logs/experiments.csv: one seed per
 trial is noisy, so the best configuration is trained with 3 seeds afterwards like every other change.
 
-    python -m spotforecast.tune --trials 50     # about 1 to 1.5 h on a Colab GPU
-    python -m spotforecast.tune --summary       # the best trials and the command to train the best one
+    python -m spotforecast.tune --trials 50     # about 20 to 30 min on a Colab GPU
+    python -m spotforecast.tune --summary       # the best trials and the options to train the 5 best with 3 seeds
 """
 import argparse
 import contextlib
@@ -63,10 +63,10 @@ def sampled_config(trial: optuna.Trial, config: dict) -> dict:
     return config
 
 
-def train_command(params: dict) -> str:
-    """The command that trains the config with the parameters of a trial."""
+def train_overrides(params: dict) -> str:
+    """The options of python -m spotforecast.train that set the parameters of a trial."""
     keys = {key.split(".")[-1]: key for key in SEARCH_SPACE}
-    return "python -m spotforecast.train " + " ".join(f"--set {keys[name]}={value}" for name, value in params.items())
+    return " ".join(f"--set {keys[name]}={value}" for name, value in params.items())
 
 
 def search(config: dict, data_config: dict, study_name: str, n_trials: int, device: torch.device) -> None:
@@ -118,7 +118,7 @@ def search(config: dict, data_config: dict, study_name: str, n_trials: int, devi
     study.optimize(objective, n_trials=max(remaining, 0))
 
 
-def summary(study_name: str) -> None:
+def summary(study_name: str, n_best: int=5) -> None:
     study = optuna.load_study(study_name=study_name, storage=storage(study_name))
     trials = study.trials_dataframe()
     finished = trials[trials["state"] == "COMPLETE"].sort_values("value")
@@ -131,8 +131,13 @@ def summary(study_name: str) -> None:
         print("\nImportance of the hyperparameters for the MAE:")
         for name, importance in optuna.importance.get_param_importances(study).items():
             print(f"  {name:17s} {importance:.2f}")
-    print("\nTrain the best trial with 3 seeds:")
-    print(f"  {train_command(study.best_trial.params)} --seed <1, 2, 3>")
+    # the best of many noisy trials looks better than it is, so the top trials are compared again with 3 seeds each
+    best = sorted([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE], key=lambda t: t.value)[:n_best]
+    print(f"\nThe {len(best)} best trials, to be trained with 3 seeds each (python -m spotforecast.train --seed <s> ...):")
+    print("candidates = [")
+    for trial in best:
+        print(f'    "{train_overrides(trial.params)}",  # trial {trial.number}, {trial.value:.2f} EUR/MWh')
+    print("]")
 
 
 def main():

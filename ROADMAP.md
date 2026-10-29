@@ -99,14 +99,18 @@ The numbers are the average effect of adding the group to any combination withou
 
 - [ ] More history. 628 training days are few for an LSTM. SMARD.de (Bundesnetzagentur) offers the same prices, generation and load hourly from 2015 on. The weather columns would have to come from the same source as `wind_mean`/`solar_mean`, otherwise the wind and solar generation replaces them. 2021–2022 was the gas crisis, a different price regime that only helps together with the fuel prices.
 - [ ] Neighbouring countries (prices and load of FR, NL, AT, CH), via the ENTSO-E Transparency Platform (free API token).
+- [ ] Real day-ahead forecasts of wind, solar and load (ENTSO-E) instead of the measured values of day D. This turns the upper bound into a realistic result and shows what perfect forecasts are worth.
+- [ ] Power plant outages (REMIT unavailability, ENTSO-E or EEX Transparency). Together with the neighbouring countries they are the most likely help for the spikes, which no model foresees so far.
 
 ### 6. Tuning and model comparison
 
 - [x] Code: `python -m spotforecast.tune` searches the hyperparameters below with Optuna (TPE). Trials that are worse than the median of the earlier ones at the same epoch are stopped after epoch 15. The first trial is the current config. Trials are stored in `logs/optuna_step6.log`, so the search continues after an interruption; they save no weights and are not added to `experiments.csv`.
-- [ ] Run the search with 50 trials on Colab — **next step**.
-- [ ] Train the best trial with 3 seeds and compare it with 18.68 ± 0.43 (rule 3).
+- [x] Search on Colab, 50 trials (45 complete, 5 stopped early), one seed per trial: the configurations differ by 1 to 3 €/MWh, the seed noise is about ±0.4, so one seed is enough to find the good region. Not extended to 100, because the top is flat.
+- Result: the 10 best trials lie within 0.15 €/MWh (18.16 to 18.31); the current config (trial 0) is 6th with 18.23. The top shares batch size 16, hidden size 256, 2 layers, dropout 0.2 to 0.45, lr 4e-4 to 1.2e-3 and a small weight decay. By Optuna's importance, weight decay (0.55) and lr (0.22) explain most of the differences, mainly because large weight decays and extreme learning rates are bad. The loss has an importance of 0: the MSE trials were bad because of their other settings, so Huber is not proven better, it just does not hurt.
+- All trials ran with seed 1, which is a lucky seed for the current config: 18.23 against its 3-seed mean of 18.68. The 3-seed means of the finalists will likely be about as high, so probably none of them passes rule 3.
+- [ ] Train the 5 best trials with 3 seeds each (`--summary` prints them). Near the top the trials differ by less than the seed noise, and the best of many noisy trials looks better than it is. The finalist with the best 3-seed mean replaces the current config only if it beats 18.68 ± 0.43 by rule 3.
 - [ ] LightGBM tuned as a second model; Ridge with the selected features is the bar (20.4).
-- [ ] Optional: an ensemble, e.g. the mean of LSTM and LightGBM or Ridge.
+- [ ] Ensemble: the mean of the forecasts of several LSTM seeds, possibly with Ridge or LightGBM. It averages out the seed noise the search shows and likely brings more than the last tenths from tuning.
 
 | Hyperparameter | Search range | Current config |
 |---|---|---|
@@ -126,14 +130,17 @@ Done when the best model is chosen. It does not have to be the LSTM.
 ### 7. Final evaluation and write-up
 
 - [ ] Retrain the best model on train + validation and evaluate it once on the test split.
-- [ ] Report: comparison with the baselines, error per hour of the day, behaviour on price spikes. State clearly that the inputs of day D are perfect forecasts.
+- [ ] Report: comparison with the baselines, error per hour of the day and per price level, the distribution of the errors (median, share of hours within 10 and 20 €/MWh), the spike days separately, a Diebold-Mariano test against Ridge. State clearly that the inputs of day D are perfect forecasts.
+- [ ] Optional: probabilistic forecasts (e.g. the 10 %, 50 % and 90 % quantiles), which show when the model is unsure, e.g. before a Dunkelflaute.
+
+How to read the MAE (Ridge with the selected features on the validation split, MAE 20.4; the LSTM is about 10 % better): the median error is 11.8 €/MWh, 44 % of the hours are within 10 €/MWh and 73 % within 20. Without the spike days 11 and 12 December the MAE is 16.9, on these two days 173. By price level: 11 to 14 €/MWh for prices between 50 and 150, 77 above 150, 21 below 50.
 - [ ] README, LICENSE, tests that guard the split against leakage.
 
 ## Colab runs
 
 Push the code first; models/ and logs/ stay on Drive as before. A training run takes about one minute on the Colab GPU. In a Colab cell, `!` commands take Python variables in `{}`; no comments after `%cd`.
 
-Step 6, the search (about 1 to 1.5 hours). If Colab disconnects, run the same cell again, the search continues where it stopped:
+Step 6, the search (about 20 to 30 minutes: with early stopping a trial takes 15 to 35 seconds on the Colab GPU). If Colab disconnects, run the same cell again, the search continues where it stopped. `--trials 100` would extend the same search to 100 trials:
 
 ```python
 %cd /content/day-ahead-price-forcast
@@ -142,18 +149,20 @@ Step 6, the search (about 1 to 1.5 hours). If Colab disconnects, run the same ce
 !python -m spotforecast.tune --trials 50
 ```
 
-Then, in a new cell, the best trials and the command for the best one:
+Then, in a new cell, the best trials and the options of the 5 best:
 
 ```python
+!git pull
 !python -m spotforecast.tune --summary
 ```
 
-Copy the `--set ...` part of the printed command into `best` and train it with 3 seeds:
+Copy the printed `candidates = [...]` list into a cell and train every finalist with 3 seeds (15 runs, about 10 minutes):
 
 ```python
-best = "--set lr=... --set ..."
-for s in [1, 2, 3]:
-    !python -m spotforecast.train --seed {s} {best}
+candidates = [...]   # from the summary
+for best in candidates:
+    for s in [1, 2, 3]:
+        !python -m spotforecast.train --seed {s} {best}
 !python scripts/compare_runs.py
 ```
 
