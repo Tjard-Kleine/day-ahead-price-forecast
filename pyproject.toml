@@ -18,6 +18,7 @@ dependencies = [
     "matplotlib",
     "holidays",  # public holidays of the German states for the calendar features
     "lightgbm",  # second model of the feature selection
+    "optuna",  # hyperparameter search
 ]
 
 [tool.setuptools.packages.find]

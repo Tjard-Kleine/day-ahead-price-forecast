@@ -16,6 +16,7 @@ dependencies:
   - matplotlib
   - holidays
   - lightgbm
+  - optuna
   - pip
   - pip:
       - -e .

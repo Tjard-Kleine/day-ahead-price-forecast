@@ -1,9 +1,14 @@
-# Feature selection (scripts/select_features.py): every combination of the groups below is added to the features and
-# future covariates of configs/lstm.toml and evaluated with Ridge and LightGBM in rolling-origin folds.
+# Feature selection (scripts/select_features.py): every combination of the groups below is added to the base features
+# and future covariates and evaluated with Ridge and LightGBM in rolling-origin folds.
 #
 # History features must be known at 12:00 on D-1. Prices, wind, solar and load count as known for all of D-1 (perfect
 # forecasts, see configs/lstm.toml). Values without a day-ahead forecast are shifted by 12 hours ("_lag12"), daily
 # prices by 24 hours ("_lag24"). Covariates of day D ("future") must have a day-ahead forecast or be known in advance.
+
+# the features every combination starts from: those of configs/lstm.toml before the selection, so that the results do not
+# change when the selected groups are added there
+base_features = ["Spot", "solar", "solar_mean", "wind_mean", "onshore wind", "solar capacity"]
+base_targets = ["Spot", "wind_mean", "solar_mean"]
 
 # validation folds [start, end): train on everything before the start, validate until the end. The last fold is the
 # validation split of configs/data.toml, the test split stays untouched

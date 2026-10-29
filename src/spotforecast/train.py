@@ -13,7 +13,8 @@ from typing import Callable, Optional
 from pathlib import Path
 
 from spotforecast.config import PROJECT_ROOT, load_config
-from spotforecast.data.dataset import load_datasets, get_feature_dims, default_batch_transform, split_history_future_batch_transform
+from spotforecast.data.dataset import (EnergyDataset, load_datasets, get_feature_dims, default_batch_transform,
+                                       split_history_future_batch_transform)
 from spotforecast.data.features import add_feature_groups
 from spotforecast.evaluate import MODEL_DIR, evaluate_model, future_shuffle_gain, model_forecast
 from spotforecast.models.baselines import stack_windows
@@ -24,9 +25,11 @@ EXPERIMENT_LOG = PROJECT_ROOT / "logs" / "experiments.csv"
 
 
 def fit(model, train_loader, val_loader, optimizer, criterion, epochs, writer, device, transform_batch_fn:Callable=default_batch_transform,
-        save_model_path: Optional[Path]=None, scheduler: Optional[LRScheduler]=None, patience: int=0) -> int:
+        save_model_path: Optional[Path]=None, scheduler: Optional[LRScheduler]=None, patience: int=0,
+        epoch_callback: Optional[Callable[[int, nn.Module], None]]=None) -> int:
     """Trains the model and returns the epoch with the best validation loss. With patience > 0 the training stops after
-    that many epochs without a better validation loss."""
+    that many epochs without a better validation loss. epoch_callback(epoch, model) is called after every epoch, e.g.
+    to stop a hyperparameter search trial early by raising an exception."""
     best_val_loss = torch.inf
     best_epoch = 0
     eps = 1e-4
@@ -89,6 +92,9 @@ def fit(model, train_loader, val_loader, optimizer, criterion, epochs, writer, d
             else:
                 scheduler.step()
 
+        if epoch_callback is not None:
+            epoch_callback(epoch + 1, model)
+
         if patience > 0 and epoch + 1 - best_epoch >= patience:
             print(f"Early stopping: no better validation loss for {patience} epochs")
             break
@@ -104,21 +110,60 @@ def build_criterion(config: dict) -> nn.Module:
     return nn.MSELoss(reduction="mean")
 
 
+def set_config_value(config: dict, key: str, value) -> None:
+    """Sets an existing config value in place, nested keys are joined by dots, e.g. "net_params.dropout_p"."""
+    *parents, name = key.strip().split(".")
+    section = config
+    for parent in parents:
+        section = section[parent]
+    if name not in section:
+        raise KeyError(f"Unknown config key: {key}")
+    section[name] = value
+
+
 def apply_overrides(config: dict, overrides: list[str]) -> None:
     """Sets config values in place from "key=value" strings, e.g. "lr=1e-3", "loss=huber" or
     "net_params.dropout_p=0.2". The value is read as TOML, anything else is taken as a string."""
     for override in overrides:
         key, value = override.split("=", 1)
-        *parents, name = key.strip().split(".")
-        section = config
-        for parent in parents:
-            section = section[parent]
-        if name not in section:
-            raise KeyError(f"Unknown config key: {key}")
         try:
-            section[name] = tomllib.loads(f"value = {value}")["value"]
+            value = tomllib.loads(f"value = {value}")["value"]
         except tomllib.TOMLDecodeError:
-            section[name] = value
+            pass
+        set_config_value(config, key, value)
+
+
+def train(config: dict, train_ds: EnergyDataset, valid_ds: EnergyDataset, device: torch.device, save_model_path: Path,
+          writer: Optional[SummaryWriter]=None, epoch_callback: Optional[Callable[[int, nn.Module], None]]=None
+          ) -> tuple[nn.Module, int]:
+    """Builds the model of the config and trains it. Returns it with the weights of its best epoch on the validation
+    split, which are saved to save_model_path, and that epoch."""
+    # N.B.: using `42` is never a good idea!
+    seed_torch(config["seed"], reproducible=True)
+    _rng_cpu = torch.Generator()
+    _rng_cpu.manual_seed(config["seed"])
+
+    train_loader = DataLoader(train_ds, batch_size=config['batch_size'], shuffle=True, pin_memory=torch.cuda.is_available(), generator=_rng_cpu)
+    val_loader = DataLoader(valid_ds, batch_size=config['batch_size'], shuffle=False, pin_memory=torch.cuda.is_available(), generator=_rng_cpu)
+
+    n_hist_features, n_future_features = get_feature_dims(train_ds)
+    model = build_model(config, n_hist_features, n_future_features, rng=_rng_cpu).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
+
+    scheduler = ReduceLROnPlateau(
+        optimizer,
+        mode='min',
+        factor=0.5,
+        patience=3
+    )
+
+    best_epoch = fit(model, train_loader, val_loader, optimizer, build_criterion(config), config['epochs'], writer, device,
+                     transform_batch_fn=split_history_future_batch_transform, save_model_path=save_model_path,
+                     scheduler=scheduler, patience=config['early_stopping_patience'], epoch_callback=epoch_callback)
+
+    print(f"Loading best model...\n")
+    load_model(model_path=save_model_path, model=model, optimizer=optimizer, device=device)
+    return model, best_epoch
 
 
 def log_experiment(run: str, config: dict, best_epoch: int, metrics: dict[str, dict[str, float]]):
@@ -167,11 +212,6 @@ def main():
     config["features"], config["targets"] = add_feature_groups(config["features"], config["targets"],
                                                                load_config("feature_selection")["groups"], args.groups)
 
-    # N.B.: using `42` is never a good idea!
-    seed_torch(config["seed"], reproducible=True)
-    _rng_cpu = torch.Generator()
-    _rng_cpu.manual_seed(config["seed"])
-
     # every run gets its own weights, config and logs, so runs never overwrite each other
     run = f"{config['model_name']}_{datetime.now():%Y%m%d-%H%M%S}_seed{config['seed']}"
     print(f"run: {run}")
@@ -180,33 +220,11 @@ def main():
     # the test split is not touched during development
     train_ds, valid_ds, _ = load_datasets(config, data_config)
 
-    train_loader = DataLoader(train_ds, batch_size=config['batch_size'], shuffle=True, pin_memory=torch.cuda.is_available(), generator=_rng_cpu)
-    val_loader = DataLoader(valid_ds, batch_size=config['batch_size'], shuffle=False, pin_memory=torch.cuda.is_available(), generator=_rng_cpu)
-
-    n_hist_features, n_future_features = get_feature_dims(train_ds)
-    model = build_model(config, n_hist_features, n_future_features, rng=_rng_cpu).to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
-
-    scheduler = ReduceLROnPlateau(
-        optimizer,
-        mode='min',
-        factor=0.5,
-        patience=3
-    )
-
-    criterion = build_criterion(config)
-    batch_tsfm_fn = split_history_future_batch_transform
     save_model_path = MODEL_DIR / f"{run}.pth"
     with open(save_model_path.with_suffix(".json"), "w") as f:
-        json.dump({"config": config, "feature_dims": [n_hist_features, n_future_features]}, f, indent=2)
+        json.dump({"config": config, "feature_dims": list(get_feature_dims(train_ds))}, f, indent=2)
 
-    best_epoch = fit(model, train_loader, val_loader, optimizer, criterion, config['epochs'], writer, device,
-                     transform_batch_fn=batch_tsfm_fn, save_model_path=save_model_path, scheduler=scheduler,
-                     patience=config['early_stopping_patience'])
-
-    print(f"Loading best model...\n")
-    load_model(model_path=save_model_path, model=model, optimizer=optimizer, device=device)
-
+    model, best_epoch = train(config, train_ds, valid_ds, device, save_model_path, writer)
     writer.close()
 
     # without dropout, so that train and val errors are comparable

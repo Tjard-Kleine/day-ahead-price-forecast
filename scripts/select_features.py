@@ -1,7 +1,7 @@
 """Which groups of features improve the forecast of the 24 prices of day D?
 
-Every combination of the groups in configs/feature_selection.toml is added to the features and future covariates of
-configs/lstm.toml. Ridge and LightGBM are trained on everything before a fold and evaluated on the fold (rolling
+Every combination of the groups in configs/feature_selection.toml is added to its base features and future covariates.
+Ridge and LightGBM are trained on everything before a fold and evaluated on the fold (rolling
 origin), so a group has to help in several quarters and not only in the volatile Q4 2024. Both models fit in seconds;
 the LSTM only confirms the best combinations afterwards.
 
@@ -93,7 +93,9 @@ def evaluate_combinations(config: dict, data_config: dict, selection: dict) -> p
     preprocess_kwargs.pop("valid_cutoff_datetime")
     preprocess_kwargs.pop("test_cutoff_datetime")
     datetime_col = preprocess_kwargs.get("datetime_col", "Date")
-    columns = list(dict.fromkeys(sum(add_feature_groups(config["features"], config["targets"], groups, group_names), [])))
+    all_features, all_targets = add_feature_groups(selection["base_features"], selection["base_targets"], groups,
+                                                   group_names)
+    columns = list(dict.fromkeys(all_features + all_targets))
     print("Loading and preprocessing the data once for all groups...")
     with contextlib.redirect_stdout(io.StringIO()):  # the preprocessing log is long
         df = load_preprocessed_data(PROJECT_ROOT / data_config["path"], columns, preprocess_kwargs)
@@ -102,7 +104,7 @@ def evaluate_combinations(config: dict, data_config: dict, selection: dict) -> p
     rows = []
     started = time.time()
     for i, combo in enumerate(combos, 1):
-        features, targets = add_feature_groups(config["features"], config["targets"], groups, combo)
+        features, targets = add_feature_groups(selection["base_features"], selection["base_targets"], groups, combo)
         maes = fold_maes(df, config, features, targets, selection["folds"], datetime_col)
         row = {"groups": "+".join(combo) or "-"}
         for model, values in maes.items():
