@@ -12,7 +12,7 @@ from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 from typing import Callable, Optional
 from pathlib import Path
 
-from spotforecast.config import PROJECT_ROOT, load_config
+from spotforecast.config import PROJECT_ROOT, load_config, load_data_config
 from spotforecast.data.dataset import (EnergyDataset, load_datasets, get_feature_dims, default_batch_transform,
                                        split_history_future_batch_transform)
 from spotforecast.data.features import add_feature_groups
@@ -208,26 +208,29 @@ def log_experiment(run: str, config: dict, best_epoch: int, metrics: dict[str, d
 
 def main():
     parser = argparse.ArgumentParser(description="Trains the LSTM described by configs/lstm.toml.")
+    parser.add_argument("--config", default="lstm", help="the model config in configs/, e.g. lstm_v2 for the SMARD data")
     parser.add_argument("--seed", type=int, help="overrides the seed of the config, e.g. to measure the run-to-run noise")
     parser.add_argument("--epochs", type=int, help="overrides the number of epochs of the config, e.g. for a quick test")
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
                         help="overrides any config value, e.g. --set lr=1e-3 --set net_params.zero_init_output=true")
     parser.add_argument("--groups", nargs="+", default=[], metavar="GROUP",
-                        help="adds feature groups of configs/feature_selection.toml, e.g. --groups calendar residual_load")
+                        help="adds feature groups of the selection config, e.g. --groups calendar residual_load")
+    parser.add_argument("--selection", default="feature_selection",
+                        help="the config of the feature groups, e.g. feature_selection_v2 for model v2")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"training on device: {device}")
 
-    config = load_config("lstm")
-    data_config = load_config("data")
+    config = load_config(args.config)
+    data_config = load_data_config(config)
     if args.seed is not None:
         config["seed"] = args.seed
     if args.epochs is not None:
         config["epochs"] = args.epochs
     apply_overrides(config, args.set)
     config["features"], config["targets"] = add_feature_groups(config["features"], config["targets"],
-                                                               load_config("feature_selection")["groups"], args.groups)
+                                                               load_config(args.selection)["groups"], args.groups)
 
     # every run gets its own weights, config and logs, so runs never overwrite each other
     run = f"{config['model_name']}_{datetime.now():%Y%m%d-%H%M%S}_seed{config['seed']}"

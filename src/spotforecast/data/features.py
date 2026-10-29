@@ -4,7 +4,8 @@ import holidays
 import numpy as np
 import pandas as pd
 
-DERIVED_FEATURES = ["Spot_roll_168", "solar_util"]
+# added to the history features when all the columns they are computed from are features: derived name -> sources
+DERIVED_FEATURES = {"Spot_roll_168": ["Spot"], "solar_util": ["solar", "solar capacity"]}
 TIME_FEATURES = ["hour_sin", "hour_cos"]
 
 # computed from the date and already in [0, 1], so they are not scaled; holiday is the share of the population that
@@ -108,8 +109,10 @@ def add_feature_groups(features: list[str], targets: list[str], groups: dict, na
 
 
 def with_derived_features(features: list[str]) -> list[str]:
-    """The data columns that get normalized: the configured features followed by the derived ones."""
-    return features + [_c for _c in DERIVED_FEATURES if _c not in features]
+    """The data columns that get normalized: the configured features followed by the derived ones whose sources are
+    features. E.g. solar_util is only added when the measured solar generation is a feature itself."""
+    return features + [_c for _c, sources in DERIVED_FEATURES.items()
+                       if _c not in features and all(_s in features for _s in sources)]
 
 
 def get_input_feature_names(features: list[str]) -> list[str]:

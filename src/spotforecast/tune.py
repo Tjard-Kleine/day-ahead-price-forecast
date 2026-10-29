@@ -22,7 +22,7 @@ import torch
 from optuna.storages import JournalStorage
 from optuna.storages.journal import JournalFileBackend, JournalFileOpenLock
 
-from spotforecast.config import PROJECT_ROOT, load_config
+from spotforecast.config import PROJECT_ROOT, load_config, load_data_config
 from spotforecast.data.dataset import build_datasets, load_preprocessed_data
 from spotforecast.evaluate import evaluate_model
 from spotforecast.train import apply_overrides, set_config_value, train
@@ -144,6 +144,7 @@ def main():
     parser = argparse.ArgumentParser(description="Hyperparameter search for the LSTM of configs/lstm.toml with Optuna.")
     parser.add_argument("--trials", type=int, default=50,
                         help="number of finished trials of the study, including earlier and stopped ones")
+    parser.add_argument("--config", default="lstm", help="the model config in configs/, e.g. lstm_v2 for the SMARD data")
     parser.add_argument("--study", default="step6", help="name of the study, its trials are in logs/optuna_<study>.log")
     parser.add_argument("--summary", action="store_true", help="only show the best trials of the study")
     parser.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
@@ -153,11 +154,11 @@ def main():
     if args.summary:
         summary(args.study)
         return
-    config = load_config("lstm")
+    config = load_config(args.config)
     apply_overrides(config, args.set)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"searching on device: {device}")
-    search(config, load_config("data"), args.study, args.trials, device)
+    search(config, load_data_config(config), args.study, args.trials, device)
     summary(args.study)
 
 

@@ -1,0 +1,39 @@
+# Model v2 of phase 2: the day-ahead forecast of the German spot price with the SMARD data and REAL forecasts
+# (at 12:00 on day D-1 the 24 hourly prices of day D). Train with python -m spotforecast.train --config lstm_v2.
+# The features are the base of the feature selection (configs/feature_selection_v2.toml); its groups are added with
+# --selection feature_selection_v2 --groups ... (step V5 of ROADMAP.md), and the winner is written here afterwards.
+# Fuel prices are not on SMARD yet
+
+model_name = "energy_lstm_v2"
+# the data config in configs/
+data = "data_smard"
+
+# history features, the window ends at midnight before day D; "Spot" must stay first, the model uses it as residual anchor.
+# Known at 12:00 on D-1: the prices of all of D-1 (also of the neighbours, all set in the auction on D-2) and the
+# forecasts for D-1 (published on D-2). Measured values only until about 12:00, so they are shifted by 12 hours
+features = ["Spot", "forecast residual load"]
+# the first entry is the forecast target, the others are inputs of day D: only day-ahead forecasts and the calendar
+targets = ["Spot", "forecast residual load"]
+
+forecast_history = 192
+# the hours of day D, days with a clock change are skipped
+forecast_horizon = 24
+# no exclude_days: the SMARD data has the normal price of the European market coupling on 2024-06-26 (data/README.md)
+exclude_days = []
+batch_size = 64
+
+# the training settings of phase 1
+lr = 1e-3
+weight_decay = 1e-4
+epochs = 300
+early_stopping_patience = 20
+loss = "huber"
+huber_delta = 1.0
+seed = 1
+
+[net_params]
+hidden_dim = 256
+dropout_p = 0.5
+num_layers = 3
+bidirectional = false
+zero_init_output = true

@@ -54,9 +54,15 @@ irradiance. The dataset comes from a university course and is not part of this r
 load correspond to the public data of [SMARD.de](https://www.smard.de) (Bundesnetzagentur). To run the code, place it
 at `data/raw/energy_ger.parquet`; `configs/data.toml` lists the expected columns.
 
-On 26 June 2024 a technical failure decoupled the German market from the European day-ahead market coupling, and the
-prices reached 2326 €/MWh without any scarcity behind them. New models leave this day out of their training targets
-(`exclude_days` in `configs/lstm.toml`); the final model below was trained before this was found and includes it.
+For phase 2 a public dataset from SMARD.de is downloaded with `python -m spotforecast.data.smard` (October 2018 to
+today, including the real day-ahead forecasts and the neighbouring countries); it is described in
+[data/README.md](data/README.md).
+
+On 26 June 2024 a technical failure at EPEX SPOT partially decoupled the German market from the European day-ahead
+market coupling. The course data has the decoupled prices of that day, up to 2326 €/MWh without any scarcity behind
+them; SMARD has the normal price of the market coupling. Models on the course data leave the day out of their training
+targets (`exclude_days` in `configs/lstm.toml`); the final model below was trained before this was found and includes
+it.
 
 | Split | Forecast days | Days |
 |---|---|---|

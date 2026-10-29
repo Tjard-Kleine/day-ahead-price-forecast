@@ -188,27 +188,90 @@ Done when the best model is chosen. It does not have to be the LSTM.
 How to read the MAE (Ridge with the selected features on the validation split, MAE 20.4; the LSTM is about 10 % better): the median error is 11.8 €/MWh, 44 % of the hours are within 10 €/MWh and 73 % within 20. Without the spike days 11 and 12 December the MAE is 16.9, on these two days 173. By price level: 11 to 14 €/MWh for prices between 50 and 150, 77 above 150, 21 below 50.
 - [x] README (task, data, model, development, results, limitations, usage), MIT LICENSE, tests against leakage (`python -m pytest tests`: windows end before their forecast day, splits do not overlap, the scaler sees only training rows, lags and calendar are correct; the tests that need the dataset are skipped without it).
 
-## Phase 2 (proposal): price spikes and more data
+## Phase 2: model v2 with public data and real forecasts
 
-The final model is good on normal days; its weak spots are price spikes. Phase 2 looks for their causes and the data that is missing.
+Model v1 is good on normal days; its weak spots are price spikes, and it used measured values of the forecast day instead of real forecasts. Phase 2 builds model v2 on public data with the real day-ahead forecasts.
 
-**Rule:** the test split Q1 2025 is used up. Its spike days (15 and 20 January 2025) must not guide the new features, otherwise it can no longer measure a new model honestly. The spikes are analysed on training and validation data only, and a new model needs a new, untouched test period, i.e. data after March 2025. The result of phase 1 (13.9 €/MWh) stays the honest result of model v1.
+**Rule:** the test split Q1 2025 is used up. Its spike days (15 and 20 January 2025) must not guide the new features, otherwise it can no longer measure a new model honestly. Model v2 is evaluated once on a new, untouched test period. The result of phase 1 (13.9 €/MWh) stays the honest result of model v1.
 
-First analysis (training and validation data, 2023 to 2024):
+### Decisions
+
+- **Goal: a realistic model.** Only what is known at 12:00 on D-1: the prices of D-1, the day-ahead forecasts of the transmission system operators for D-1 and D, measured values shifted by 12 hours, the calendar. The metric stays the MAE.
+- **Data: SMARD.de** (market data under CC BY 4.0, attribution "Bundesnetzagentur | SMARD.de"). `data/raw/smard.parquet` is committed as a fixed snapshot, its download cache is not.
+- **Fuel prices** (gas, coal, CO₂) are not on SMARD: v2 starts without them; they can be added later if a free source is found.
+- **Splits** (`configs/data_smard.toml`): training October 2018 to March 2024 (1989 days), validation April 2024 to March 2025 (363 days, every season), test April 2025 to the end of the data (573 days), untouched until the final evaluation.
+- **26 June 2024** is no training target (`exclude_days`): on 25 June 2024 a technical failure at EPEX SPOT partially decoupled its markets from the European day-ahead market coupling (SDAC); the German price averaged 492 €/MWh on 26 June and reached 2326 €/MWh, no market outcome of supply and demand. To cite in the README: a primary source such as the EPEX SPOT communication or the SDAC incident report.
+
+### Spike analysis (training and validation data of phase 1, 2023 to 2024)
+
 - Spikes are rare and come in episodes: about 57 hours above 300 €/MWh in two years, mainly September 2023, late-summer evenings 2024 and the Dunkelflaute in November and December 2024. Most of them are in the evening (16:00 to 20:00).
 - The residual load does not explain them alone: in its top 10 % only 84 of 1755 hours are above 250 €/MWh.
-- Compared with other hours of high residual load, the spike hours have less wind (3.1 against 7.4 GW), twice the imports (11.7 against 5.8 GW), more gas, oil and pumped storage, but **less lignite and hard coal** (11.7 against 13.5 and 6.4 against 7.4 GW). The gas price is the same (43 against 42 €/MWh). This points to unavailable power plants and to the situation in the neighbouring countries, neither of which is in the data.
-- 26 June 2024 has prices up to 2326 €/MWh at night and in the evening of a summer day, which no fundamental explains.
-
-Proposed steps:
-- [x] Research 26 June 2024: on 25 June 2024 a technical failure at EPEX SPOT partially decoupled its markets from the European day-ahead market coupling (SDAC), so no cross-border capacity could be allocated for 26 June; in Germany the day-ahead price averaged about 492 €/MWh (the dataset gives exactly 492.0) and reached 2326 €/MWh in the morning and 1796 in the evening. The prices are no market outcome of supply and demand. To cite in the README: a primary source such as the EPEX SPOT communication or the SDAC incident report.
-- [x] Consequence: `exclude_days = ["2024-06-26"]` in `configs/lstm.toml`. The day is no training target of new runs any more (627 instead of 628 training days); it stays in the history of the following days, where its prices were known values, and in the evaluation. The final model of phase 1 was trained with it and stays unchanged (`predict` still reproduces it exactly, because its saved config has no `exclude_days`).
+- Compared with other hours of high residual load, the spike hours have less wind (3.1 against 7.4 GW), twice the imports (11.7 against 5.8 GW), more gas, oil and pumped storage, but **less lignite and hard coal** (11.7 against 13.5 and 6.4 against 7.4 GW). The gas price is the same (43 against 42 €/MWh). This points to unavailable power plants and to the situation in the neighbouring countries.
 - [ ] Research the causes of the Dunkelflaute spikes of November and December 2024 (Bundesnetzagentur, SMARD articles, press; was capacity withheld?).
-- [ ] Decide the goal: a better MAE, or catching spikes (probability of a price above e.g. 250 €/MWh, quantile forecasts). The Huber loss and the MAE deliberately weigh spikes little.
-- [ ] Data: power plant unavailability (ENTSO-E / REMIT), neighbouring countries' load, wind, solar, French nuclear availability and cross-border capacities (not their prices, which come from the same auction), real day-ahead forecasts; all from the ENTSO-E Transparency Platform (free API token). More history (from 2015) and newer data (from April 2025, the new test period) from SMARD.de.
-- [ ] New splits with a new test period after March 2025, then steps 1 to 7 again for model v2.
 
-## Colab runs
+### Steps of model v2
+
+- [x] **V1. Data.** `python -m spotforecast.data.smard` downloads hourly data from October 2018 to today into `data/raw/smard.parquet` (70,820 hours, 49 columns, about 20 minutes; SMARD's download center gives at most 14 days per file, so the module uses the JSON interface behind its charts, one week per request, cached in `data/raw/smard/cache/`; a later run only fetches new weeks). Price, load, all generation types, the day-ahead forecasts for Germany and Austria, the prices of the 11 neighbouring bidding zones, the commercial net export in total and per border, the installed wind and solar capacity. Every column, its meaning and what is known at 12:00 on D-1 is in `data/README.md`. Not on SMARD: weather, fuel prices, load and generation of the neighbouring countries (ENTSO-E).
+  - Checked against the course data (November and December 2024): the price is identical, the load practically identical, generation correlates with 0.9999 to 1.0 with small level differences (gas about 1 GW, probably later revisions), so v2 uses SMARD only. SMARD's residual load is load − wind − solar, the definition of the pipeline; its forecast residual load is the same from the forecasts.
+  - Gaps: the exchange with Belgium and Norway is 0 before their interconnectors (ALEGrO November 2020, NordLink December 2020); SMARD's total net export has gaps of up to three months in 2019 and 2020, so it is the sum of the borders (equal to SMARD's own total in all but 14 of 52,002 hours); the Polish price starts on 20 November 2019; a few single days of forecasts are missing and filled by the pipeline. Since October 2025 the auction sets quarter-hour prices; SMARD's hourly price is their mean (checked).
+- [x] **V2. Pipeline.** `configs/data_smard.toml` and `configs/lstm_v2.toml`, a first model config with only what is known at 12:00 on D-1 (measured values shifted by 12 hours, the forecasts and the calendar as inputs of day D). `train`, `evaluate`, `tune`, `select_features` and `compare_runs` take `--config lstm_v2`; runs without a `data` key keep using the course data, so model v1 is still reproduced exactly. A test checks that the v2 config uses no measured value of day D.
+  - First realistic numbers on the validation year: day D-1 31.1 €/MWh, **Ridge with the real forecasts 16.3**, Ridge with the measured values of day D (the perfect forecasts of phase 1) 16.7. **The real forecasts are not worse**: the auction sets the price from the forecasts, not from the later measurements. If model v2 confirms this, the README statement that v1 is an upper bound for real forecasts has to be revised.
+- [x] **V3. Sanity checks** of the SMARD data (`notebooks/04_sanity_checks_v2.ipynb`, training and validation period only): all passed. Alignment of history and targets; every forecast correlates best with the measurement of the same hour (no time shift in SMARD); the 12-hour shift is exact and the information set holds; the forecast errors change only gradually over the years (the solar error grows with the capacity); the untrained model equals persistence and memorizes a batch.
+  - Finding: **in the SMARD data 26 June 2024 has normal prices** (mean 103 €/MWh, almost the same as Austria); the decoupled prices up to 2326 €/MWh are only in the course data. Most likely there were two prices on that day, that of the decoupled EPEX SPOT auction (course data) and that of the European market coupling (SMARD); to be checked with the primary source. The day does not change the v2 validation numbers, so `configs/lstm_v2.toml` has no `exclude_days`; for v1 the exclusion stays right.
+- [x] **V4. Feature selection** with Ridge and LightGBM, run locally (about 45 minutes; log `logs/select_features_v2.log`, results `logs/feature_selection_v2.csv`): `configs/feature_selection_v2.toml`, the base (price and forecast residual load) plus 7 groups (calendar, the single forecasts of load, wind and solar, the measured residual load shifted by 12 h, conventional generation shifted by 12 h, the prices of 7 neighbours of D-1, the net export shifted by 12 h, the Austrian forecasts), all 128 combinations, validated in the four quarters of the validation year; the script saves after every combination and continues after an interruption.
+
+| | Ridge | LightGBM |
+|---|---|---|
+| Base only | 16.12 | 14.78 |
+| Best combination | 15.78 (−0.34) | 13.81 (−0.97) |
+| Forward selection (≥ 0.1 €/MWh, ≥ 3 of 4 folds) | no group | neighbour prices (−0.52), Austria (−0.36) → 13.90 |
+
+| Group, average effect when added | Ridge | LightGBM |
+|---|---|---|
+| neighbour_prices | −0.19, better in 75 % of the folds | **−0.43, 91 %** |
+| austria | +0.36, 33 % | −0.23, 69 % |
+| forecast_details | −0.17, 70 % | −0.05, 50 % |
+| measured_lag12, conventional_lag12 | −0.09 each | +0.03, −0.03 |
+| calendar, net_export_lag12 | −0.04, −0.01 | +0.01, −0.02 |
+
+  - **The groups matter much less than in phase 1**: the base already holds most of the information. Only the neighbours' prices of D-1 help robustly. The calendar, a strong group in phase 1, adds nothing any more; its effect is apparently already in the load forecast.
+  - **LightGBM beats Ridge clearly** (14.8 against 16.1 with the base), unlike in phase 1: with almost 2000 training days the trees can learn the nonlinear merit order. LightGBM is a candidate for the v2 ensemble.
+- [ ] **V5. LSTM** — **on Colab, next step**: three candidates with the training settings of phase 1, 3 seeds each, compared with each other and with Ridge on the same information (`python -m spotforecast.evaluate --run <run>`):
+  1. the base (price and forecast residual load), the reference;
+  2. base + neighbour_prices + austria, the choice of LightGBM;
+  3. base + calendar + forecast_details + measured_lag12, the starting config of V2, close to the best simple combination of Ridge.
+  `configs/lstm_v2.toml` holds the base; the groups are added with `--selection feature_selection_v2 --groups ...`; the winner is written into the config afterwards. A run takes about 35 s per epoch on a laptop CPU, likely 2 to 5 minutes in all on the Colab GPU.
+- [ ] **V6. Ensemble and final evaluation**: the mean of the LSTM seeds with Ridge as in phase 1, and now also with LightGBM, which needs to become a model of the package (so far it only exists in the feature selection); frozen on the validation year, then evaluated once on the test period.
+- [ ] **V7. Report**: test results, figures, README (including the statement about the upper bound).
+- [ ] Research: when do the transmission system operators publish their day-ahead forecasts, before or after 12:00 on D-1? If after, the report has to say so.
+- Later: a live forecast for tomorrow (for the portfolio web view; needs `predict` without an actual price and the forecasts of tomorrow) and a regular retraining, because the market changes; fuel prices; power plant outages and the neighbours' load from ENTSO-E; a probability of price spikes.
+
+## Colab runs of phase 2
+
+V5, the three LSTM candidates of model v2 with 3 seeds each (9 runs, about 20 to 45 minutes on the GPU). The data comes with `git pull`, because `data/raw/smard.parquet` is in the repository:
+
+```python
+%cd /content/day-ahead-price-forcast
+!git pull
+!pip install -q -e .
+v2 = "--config lstm_v2 --selection feature_selection_v2"
+for groups in ["", "--groups neighbour_prices austria", "--groups calendar forecast_details measured_lag12"]:
+    for s in [1, 2, 3]:
+        !python -m spotforecast.train {v2} --seed {s} {groups}
+```
+
+Then, in a new cell, the comparison to send back:
+
+```python
+!python scripts/compare_runs.py --config lstm_v2 --selection feature_selection_v2
+```
+
+V4, the feature selection, ran locally instead (Colab's 2 CPU cores are slower than a laptop):
+`python scripts/select_features.py --config lstm_v2 --selection feature_selection_v2`.
+
+`/content/day-ahead-price-forcast` is the folder of the existing clone, which keeps the old repository name; a new clone is called `day-ahead-price-forecast`.
+
+## Colab runs of phase 1
 
 Push the code first; models/ and logs/ stay on Drive as before. A training run takes about one minute on the Colab GPU. In a Colab cell, `!` commands take Python variables in `{}`; no comments after `%cd`.
 

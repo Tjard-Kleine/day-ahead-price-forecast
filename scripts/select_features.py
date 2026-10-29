@@ -7,19 +7,21 @@ the LSTM only confirms the best combinations afterwards.
 
     python scripts/select_features.py              # about 11 min on a laptop, writes logs/feature_selection.csv
     python scripts/select_features.py --summary    # only prints the summary of the saved results again
+    python scripts/select_features.py --config lstm_v2 --selection feature_selection_v2    # model v2, SMARD data
 """
 import argparse
 import contextlib
 import io
 import itertools
 import time
+from pathlib import Path
 
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import RidgeCV
 
-from spotforecast.config import PROJECT_ROOT, load_config
+from spotforecast.config import PROJECT_ROOT, load_config, load_data_config
 from spotforecast.data.dataset import build_datasets, load_preprocessed_data
 from spotforecast.data.features import add_feature_groups
 from spotforecast.models.baselines import ridge_features, stack_windows
@@ -86,8 +88,10 @@ def forward_selection(results: pd.DataFrame, model: str, group_names: list[str],
         chosen.sort(key=group_names.index)
 
 
-def evaluate_combinations(config: dict, data_config: dict, selection: dict) -> pd.DataFrame:
-    """Fold MAEs of Ridge and LightGBM for every combination of the groups, one row per combination."""
+def evaluate_combinations(config: dict, data_config: dict, selection: dict, results_path: Path) -> pd.DataFrame:
+    """Fold MAEs of Ridge and LightGBM for every combination of the groups, one row per combination. The results are
+    saved to results_path after every combination, and a combination that is already there is not evaluated again, so
+    an interrupted run continues where it stopped (delete the file after changing groups or folds)."""
     groups = selection["groups"]
     group_names = list(groups)
     preprocess_kwargs = dict(data_config["preprocessing"])
@@ -102,9 +106,15 @@ def evaluate_combinations(config: dict, data_config: dict, selection: dict) -> p
         df = load_preprocessed_data(PROJECT_ROOT / data_config["path"], columns, preprocess_kwargs)
 
     combos = [c for r in range(len(group_names) + 1) for c in itertools.combinations(group_names, r)]
-    rows = []
+    rows = pd.read_csv(results_path).to_dict("records") if results_path.exists() else []
+    done = {row["groups"] for row in rows}
+    if done:
+        print(f"{len(done)} of {len(combos)} combinations are already in {results_path.name}, they are skipped")
+    results_path.parent.mkdir(exist_ok=True)
     started = time.time()
     for i, combo in enumerate(combos, 1):
+        if ("+".join(combo) or "-") in done:
+            continue
         features, targets = add_feature_groups(selection["base_features"], selection["base_targets"], groups, combo)
         maes = fold_maes(df, config, features, targets, selection["folds"], datetime_col)
         row = {"groups": "+".join(combo) or "-"}
@@ -112,6 +122,7 @@ def evaluate_combinations(config: dict, data_config: dict, selection: dict) -> p
             row.update({f"{model}_fold{k + 1}": v for k, v in enumerate(values)})
             row[f"{model}_mean"] = float(np.mean(values))
         rows.append(row)
+        pd.DataFrame(rows).to_csv(results_path, index=False)
         print(f"[{i}/{len(combos)}, {time.time() - started:.0f} s] {row['groups']:60s} "
               f"Ridge {row['ridge_mean']:.2f}, LightGBM {row['lgbm_mean']:.2f} EUR/MWh", flush=True)
     return pd.DataFrame(rows).set_index("groups")
@@ -119,23 +130,26 @@ def evaluate_combinations(config: dict, data_config: dict, selection: dict) -> p
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluates every combination of the feature groups with Ridge and LightGBM.")
-    parser.add_argument("--summary", action="store_true", help=f"only summarize the results in {RESULTS.name} again")
+    parser.add_argument("--summary", action="store_true", help="only summarize the saved results again")
+    parser.add_argument("--config", default="lstm", help="the model config, it gives the data and the history length")
+    parser.add_argument("--selection", default="feature_selection",
+                        help="the config of the groups and folds; the results go to logs/<selection>.csv")
     args = parser.parse_args()
 
-    config = load_config("lstm")
-    selection = load_config("feature_selection")
+    config = load_config(args.config)
+    selection = load_config(args.selection)
     group_names = list(selection["groups"])
+    results_path = RESULTS.with_name(f"{args.selection}.csv")
 
     if args.summary:
-        results = pd.read_csv(RESULTS, index_col="groups")
+        results = pd.read_csv(results_path, index_col="groups")
     else:
-        results = evaluate_combinations(config, load_config("data"), selection)
-        RESULTS.parent.mkdir(exist_ok=True)
-        results.to_csv(RESULTS)
+        results = evaluate_combinations(config, load_data_config(config), selection, results_path)
+        results.to_csv(results_path)
     combos = [c for r in range(len(group_names) + 1) for c in itertools.combinations(group_names, r)]
 
     print(f"\nMean validation MAE over {len(selection['folds'])} folds in EUR/MWh, results in "
-          f"{RESULTS.relative_to(PROJECT_ROOT)}")
+          f"{results_path.relative_to(PROJECT_ROOT)}")
     for model in ["ridge", "lgbm"]:
         folds = [c for c in results.columns if c.startswith(f"{model}_fold")]
         print(f"\n{model}: without groups {results.loc['-', f'{model}_mean']:.2f}, best combinations:")

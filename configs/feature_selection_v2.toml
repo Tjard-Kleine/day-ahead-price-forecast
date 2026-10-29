@@ -1,0 +1,58 @@
+# Feature selection of model v2 (scripts/select_features.py --config lstm_v2 --selection feature_selection_v2): every
+# combination of the groups below is added to the base features and inputs of day D and evaluated with Ridge and
+# LightGBM in rolling-origin folds on the SMARD data.
+#
+# Only what is known at 12:00 on D-1 (data/README.md): prices of D-1 (also of the neighbours) and the day-ahead
+# forecasts in the history, measured values shifted by 12 hours ("_lag12"); as inputs of day D only the forecasts and
+# the calendar. The Polish price is left out, it starts in November 2019 only.
+
+base_features = ["Spot", "forecast residual load"]
+base_targets = ["Spot", "forecast residual load"]
+
+# the four quarters of the validation year: train on everything before a quarter, validate on it; the test period
+# (from April 2025) stays untouched
+folds = [
+    ["2024-04-01 00:00:00", "2024-07-01 00:00:00"],
+    ["2024-07-01 00:00:00", "2024-10-01 00:00:00"],
+    ["2024-10-01 00:00:00", "2025-01-01 00:00:00"],
+    ["2025-01-01 00:00:00", "2025-04-01 00:00:00"],
+]
+# a group is kept if it lowers the mean MAE over the folds by at least min_gain (EUR/MWh) and is better in at least
+# min_better_folds folds
+min_gain = 0.1
+min_better_folds = 3
+
+[groups.calendar]
+# weekends and public holidays have a lower demand
+features = ["saturday", "sunday", "holiday"]
+future = ["saturday", "sunday", "holiday"]
+
+[groups.forecast_details]
+# the parts of the forecast residual load: load, wind and solar, history and day D
+features = ["forecast load", "forecast onshore wind", "forecast offshore wind", "forecast solar"]
+future = ["forecast load", "forecast onshore wind", "forecast offshore wind", "forecast solar"]
+
+[groups.measured_lag12]
+# the measured residual load until about 12:00 on D-1, together with its forecast it shows the recent forecast error
+features = ["residual load_lag12"]
+future = []
+
+[groups.conventional_lag12]
+# what the conventional power plants and the storage produced until about 12:00 on D-1
+features = ["brown coal_lag12", "black coal_lag12", "natural gas_lag12", "pumped storage_lag12"]
+future = []
+
+[groups.neighbour_prices]
+# the prices of D-1 in the coupled neighbouring markets, set in the same auction as the German price of D-1
+features = ["price AT", "price BE", "price CH", "price CZ", "price DK1", "price FR", "price NL"]
+future = []
+
+[groups.net_export_lag12]
+# the commercial net export until about 12:00 on D-1
+features = ["net export_lag12"]
+future = []
+
+[groups.austria]
+# the day-ahead forecasts of the closest coupled neighbour, history and day D
+features = ["AT forecast load", "AT forecast onshore wind", "AT forecast solar"]
+future = ["AT forecast load", "AT forecast onshore wind", "AT forecast solar"]

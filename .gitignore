@@ -11,6 +11,8 @@ venv/
 # data, model weights and training logs are not versioned
 data/raw/*
 !data/raw/.gitkeep
+# except the public SMARD data of phase 2 (CC BY 4.0, Bundesnetzagentur | SMARD.de); its download cache stays out
+!data/raw/smard.parquet
 data/processed/*
 !data/processed/.gitkeep
 models/*

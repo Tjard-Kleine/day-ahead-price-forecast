@@ -13,7 +13,8 @@ import pytest
 
 from spotforecast.config import PROJECT_ROOT, load_config
 from spotforecast.data.dataset import EnergyDataset, fit_trimmed_scaler, load_datasets
-from spotforecast.data.features import add_columns_, get_calendar_features, source_columns
+from spotforecast.data.features import add_columns_, get_calendar_features, source_columns, with_derived_features
+from spotforecast.data.smard import MEASURED, NEIGHBOUR_PRICES
 from spotforecast.evaluate import diebold_mariano
 
 
@@ -56,6 +57,19 @@ def test_calendar_features():
     assert calendar["holiday"].round(2).tolist() == [1.0, 0.57, 0.0, 0.0, 0.0, 1.0]  # All Saints' Day: 5 of 16 states
     assert calendar["saturday"].tolist() == [0, 0, 1, 0, 0, 0]
     assert calendar["sunday"].tolist() == [0, 0, 0, 1, 0, 0]
+
+
+def test_derived_features_need_their_sources():
+    assert with_derived_features(["Spot", "solar", "solar capacity"])[-2:] == ["Spot_roll_168", "solar_util"]
+    # without the measured solar generation, its utilization would leak it into a realistic model
+    assert with_derived_features(["Spot", "forecast solar"]) == ["Spot", "forecast solar", "Spot_roll_168"]
+
+
+def test_v2_uses_only_what_is_known_at_noon_before_the_day():
+    config = load_config("lstm_v2")
+    measured = set(MEASURED) | {"residual load"}  # computed from measured values
+    assert not measured & set(config["features"]), "measured values must be shifted, e.g. <column>_lag12"
+    assert not (measured | set(NEIGHBOUR_PRICES)) & set(config["targets"][1:]), "no inputs of day D from the auction"
 
 
 def test_source_columns_of_derived_features():

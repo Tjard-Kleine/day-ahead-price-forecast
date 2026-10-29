@@ -1,11 +1,14 @@
 """Summarizes logs/experiments.csv: one row per configuration with the mean and std of its runs over the seeds.
 
-Only the runs of the current task (forecast horizon of configs/lstm.toml) and only the config values that differ
+Only the runs on the data of the model config (configs/lstm.toml by default) and only the config values that differ
 between the runs are shown. The features are shown as the groups of configs/feature_selection.toml a run used, plus
 the names outside of these groups that it added (+) or left out (-).
 
-    python scripts/compare_runs.py
+    python scripts/compare_runs.py                    # runs on the course data of phase 1
+    python scripts/compare_runs.py --config lstm_v2   # runs on the SMARD data of phase 2
 """
+import argparse
+
 import pandas as pd
 
 from spotforecast.config import load_config
@@ -16,7 +19,7 @@ RUN_COLUMNS = ["time", "run", "commit", "seed", "best_epoch"]
 METRICS = ["val_mae_eur", "val_rmse_eur", "train_mae_eur", "val_future_gain_eur", "best_epoch"]
 # runs from before an option existed were trained like its default
 OPTION_DEFAULTS = {"loss": "mse", "huber_delta": 1.0, "early_stopping_patience": 0, "zero_init_output": False,
-                   "exclude_days": "none"}
+                   "exclude_days": "none", "data": "data"}
 
 
 def feature_label(features: str, targets: str, selection: dict) -> str:
@@ -34,13 +37,22 @@ def feature_label(features: str, targets: str, selection: dict) -> str:
 
 
 def main():
-    base = load_config("lstm")
-    selection = load_config("feature_selection")
+    parser = argparse.ArgumentParser(description="Summarizes logs/experiments.csv per configuration.")
+    parser.add_argument("--config", default="lstm",
+                        help="the model config: only runs on its data are shown, their features relative to it")
+    parser.add_argument("--selection", default="feature_selection", help="the config of the feature groups")
+    args = parser.parse_args()
+
+    base = load_config(args.config)
+    selection = load_config(args.selection)
     log = pd.read_csv(EXPERIMENT_LOG)
     log = log[log["forecast_horizon"] == base["forecast_horizon"]].copy()
     for key, default in OPTION_DEFAULTS.items():
         if key in log.columns:
             log[key] = [default if pd.isna(value) else value for value in log[key]]
+    # runs on other data have other validation splits and cannot be compared
+    if "data" in log.columns:
+        log = log[log["data"] == base.get("data", "data")]
     log["features"] = [feature_label(f, t, selection) for f, t in zip(log["features"], log["targets"])]
     log = log.drop(columns="targets")
 

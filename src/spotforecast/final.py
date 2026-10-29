@@ -23,7 +23,7 @@ import pandas as pd
 import torch
 from torch.utils.data import ConcatDataset
 
-from spotforecast.config import PROJECT_ROOT, load_config
+from spotforecast.config import PROJECT_ROOT, load_config, load_data_config
 from spotforecast.data.dataset import get_feature_dims, load_datasets
 from spotforecast.evaluate import MODEL_DIR, compute_metrics, diebold_mariano, predict, seed_runs
 from spotforecast.models.baselines import fit_ridge, naive_forecasts, ridge_features, stack_windows
@@ -84,7 +84,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     epochs = args.epochs or final_epochs(config)
     with contextlib.redirect_stdout(io.StringIO()):  # the preprocessing log is long
-        train_ds, valid_ds, test_ds = load_datasets(config, load_config("data"))
+        train_ds, valid_ds, test_ds = load_datasets(config, load_data_config(config))
     if args.dry_run:
         fit_ds, eval_ds, split = train_ds, valid_ds, "validation split (dry run)"
     else:

@@ -19,7 +19,7 @@ import pandas as pd
 import torch
 from torch.utils.data import ConcatDataset
 
-from spotforecast.config import PROJECT_ROOT, load_config
+from spotforecast.config import PROJECT_ROOT, load_data_config
 from spotforecast.data.dataset import EnergyDataset, load_datasets
 from spotforecast.evaluate import load_run, model_forecast
 from spotforecast.final import FINAL_DIR
@@ -44,7 +44,7 @@ class FinalModel:
         self.lstms = [model_forecast(model, device) for model, _ in loaded]
         self.config = loaded[0][1]
         with contextlib.redirect_stdout(io.StringIO()):  # the preprocessing log is long
-            datasets = load_datasets(self.config, load_config("data"))
+            datasets = load_datasets(self.config, load_data_config(self.config))
         self.splits = dict(zip(["train", "validation", "test"], datasets))
         # the same days as in spotforecast.final, and Ridge is deterministic, so it is the same model
         self.ridge = fit_ridge(ConcatDataset([self.splits["train"], self.splits["validation"]]))

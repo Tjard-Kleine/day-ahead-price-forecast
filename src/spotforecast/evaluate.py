@@ -18,7 +18,7 @@ import torch
 from scipy.stats import norm
 from torch.utils.data import DataLoader
 
-from spotforecast.config import PROJECT_ROOT, load_config
+from spotforecast.config import PROJECT_ROOT, load_config, load_data_config
 from spotforecast.data.dataset import EnergyDataset, load_datasets, split_history_future_batch_transform
 from spotforecast.models.baselines import fit_ridge, naive_forecasts, ridge_features, stack_windows
 from spotforecast.models.lstm import EnergyLSTMNet, build_model
@@ -156,19 +156,21 @@ def main():
                         help="compare models and features on 'val', use 'test' only once at the very end")
     parser.add_argument("--ensemble", action="store_true",
                         help="instead of a single run: the mean forecasts of the runs in models/ with the features of "
-                             "configs/lstm.toml, of the seeds of its exact config and of all these runs, each also "
+                             "the model config, of the seeds of its exact config and of all these runs, each also "
                              "averaged with Ridge")
+    parser.add_argument("--config", default="lstm",
+                        help="the model config for --ensemble or without any run, e.g. lstm_v2 for the SMARD data")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    data_config = load_config("data")
     run = None if args.ensemble else args.run or latest_run()
     if run is not None:
         model, config = load_run(run, device)
     else:
         if not args.ensemble:
             print("No trained run in models/, evaluating only the baselines.")
-        config = load_config("lstm")
+        config = load_config(args.config)
+    data_config = load_data_config(config)
 
     train_ds, valid_ds, test_ds = load_datasets(config, data_config)
     ds = valid_ds if args.split == "val" else test_ds
