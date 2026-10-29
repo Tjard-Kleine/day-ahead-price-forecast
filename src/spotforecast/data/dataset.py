@@ -13,7 +13,7 @@ from spotforecast.data.features import add_derived_features_, get_input_feature_
 
 class EnergyDataset(Dataset):
 
-    def __init__(self, features, target, window, horizon, stride):
+    def __init__(self, features, target, window, horizon, stride, target_scaler: Optional[StandardScaler]=None):
         self.features = torch.tensor(features, dtype=torch.float32) if not torch.is_tensor(features) else features
         self.target = torch.tensor(target, dtype=torch.float32) if not torch.is_tensor(target) else target
         if len(self.target) != len(self.features):
@@ -21,6 +21,8 @@ class EnergyDataset(Dataset):
         self.window = window
         self.horizon = horizon
         self.stride = stride
+        # undoes the target normalization, e.g. to report errors in EUR/MWh
+        self.target_scaler = target_scaler
 
         self.set_usable_idxs()
 
@@ -53,26 +55,24 @@ def load_from_parquet(path: str, input_cols: list[str], output_cols: Optional[li
     return pd.read_parquet(path=path, columns=_load_cols)
 
 
-def get_normalized_data(data: pd.DataFrame, features: list[str], targets: list[str], datetime_col: str, valid_cutoff_datetime: str):
+def before_cutoff(dates: pd.Series, cutoff_datetime: str) -> pd.Series:
+    """Marks the timestamps before the cutoff, which is read in the timezone of the dates if it has none."""
+    cutoff = datetime.fromisoformat(cutoff_datetime)
+    timezone = dates[0].tz
+    if timezone is not None and cutoff.tzinfo is None:
+        cutoff = timezone.localize(cutoff)
+    return dates < cutoff
+
+
+def get_normalized_data(data: pd.DataFrame, features: list[str], targets: list[str], datetime_col: str,
+                        valid_cutoff_datetime: str, test_cutoff_datetime: str):
     data_X = data[features].to_numpy(dtype=np.float32)
     data_y = data[targets].to_numpy(dtype=np.float32)
 
-    # calculate the index map
-    valid_dt = datetime.fromisoformat(valid_cutoff_datetime)
-    timezone = data[datetime_col][0].tz
-    if timezone is not None:
-        valid_dt_copy = valid_dt
-        if valid_dt_copy.tzinfo is None:
-            train_test_split_local = timezone.localize(valid_dt_copy)
-        else:
-            train_test_split_local = valid_dt_copy
-        _train_map = data[datetime_col] < train_test_split_local
-    else:
-        _train_map = data[datetime_col] < valid_dt
-
-    # assuming the dataset is ordered, we can calculate the index
-    _train_end = int(_train_map.sum()) + 1
-    _val_end = None
+    # assuming the dataset is ordered, the splits end at the number of rows before their cutoff
+    _train_map = before_cutoff(data[datetime_col], valid_cutoff_datetime)
+    _train_end = int(_train_map.sum())
+    _val_end = int(before_cutoff(data[datetime_col], test_cutoff_datetime).sum())
 
     scaler_X = StandardScaler().fit(data_X[:_train_end])
     _means_X = data.loc[_train_map, features].apply(datap.trimmed_func, axis=0, function = np.mean, keep=0.95)
@@ -89,7 +89,7 @@ def get_normalized_data(data: pd.DataFrame, features: list[str], targets: list[s
     X_scaled = scaler_X.transform(data_X)
     y_scaled = scaler_y.transform(data_y)
 
-    return X_scaled, y_scaled, _train_end, _val_end
+    return X_scaled, y_scaled, scaler_y, _train_end, _val_end
 
 
 def get_preprocessed_ts_data(path: str, features: list[str], targets: list[str], window_size: int, forecast_horizon: int, stride: int, preprocess_kwargs: dict):
@@ -97,7 +97,8 @@ def get_preprocessed_ts_data(path: str, features: list[str], targets: list[str],
     _datetime_col = preprocess_kwargs.get("datetime_col", "Date")
     df = load_from_parquet(path=path, input_cols=features, output_cols=_targets, additional_cols=[_datetime_col])
 
-    _valid_cutoff_datetime = preprocess_kwargs.pop("valid_cutoff_datetime") if preprocess_kwargs.get("valid_cutoff_datetime", None) else None
+    _valid_cutoff_datetime = preprocess_kwargs.pop("valid_cutoff_datetime")
+    _test_cutoff_datetime = preprocess_kwargs.pop("test_cutoff_datetime")
 
     _data_cols = features + [_c for _c in _targets if _c not in features]  # all data cols must be normalized
     df = datap.preprocess_ts_data(data=df,
@@ -109,25 +110,31 @@ def get_preprocessed_ts_data(path: str, features: list[str], targets: list[str],
     _features = with_derived_features(features)
     print(f"Using features: {get_input_feature_names(features)}, using targets: {_targets}")
 
-    X_scaled, y_scaled, _train_end, _val_end = get_normalized_data(data=df,
-                                                                   features=_features,
-                                                                   targets=_targets,
-                                                                   datetime_col=_datetime_col,
-                                                                   valid_cutoff_datetime=_valid_cutoff_datetime)
+    X_scaled, y_scaled, scaler_y, _train_end, _val_end = get_normalized_data(data=df,
+                                                                             features=_features,
+                                                                             targets=_targets,
+                                                                             datetime_col=_datetime_col,
+                                                                             valid_cutoff_datetime=_valid_cutoff_datetime,
+                                                                             test_cutoff_datetime=_test_cutoff_datetime)
 
     # the cyclic time features are already in [-1, 1] and are appended without scaling
     X_scaled = np.c_[X_scaled, get_time_features(df.loc[:, _datetime_col], dtype=np.float32)]
 
-    train_ds = EnergyDataset(X_scaled[:_train_end], y_scaled[:_train_end], window_size,
-                             forecast_horizon, stride)
-    valid_ds = EnergyDataset(X_scaled[_train_end:_val_end], y_scaled[_train_end:_val_end], window_size,
-                             forecast_horizon, stride)
+    def _split(start: int, end: Optional[int]) -> EnergyDataset:
+        # the history window may reach back into the previous split, the forecast targets all lie in [start, end)
+        _start = max(start - window_size, 0)
+        return EnergyDataset(X_scaled[_start:end], y_scaled[_start:end], window_size, forecast_horizon, stride,
+                             target_scaler=scaler_y)
 
-    return train_ds, valid_ds
+    train_ds = _split(0, _train_end)
+    valid_ds = _split(_train_end, _val_end)
+    test_ds = _split(_val_end, None)
+
+    return train_ds, valid_ds, test_ds
 
 
-def load_datasets(config: dict, data_config: dict) -> tuple[EnergyDataset, EnergyDataset]:
-    """Builds the train and validation datasets from the model config and the data config."""
+def load_datasets(config: dict, data_config: dict) -> tuple[EnergyDataset, EnergyDataset, EnergyDataset]:
+    """Builds the train, validation and test datasets from the model config and the data config."""
     return get_preprocessed_ts_data(
         path=PROJECT_ROOT / data_config["path"],
         features=config["features"],

@@ -8,7 +8,7 @@ import torch.nn as nn
 
 
 def seed_torch(seed, reproducible:bool = False):
-    np.random.seed(seed % (2*64-1))  # numpy global rng
+    np.random.seed(seed % 2**32)  # numpy global rng, only accepts 32 bit seeds
     torch.manual_seed(seed % (2**64-1))  # torch global rng (CPU & CUDA)
     random.seed(seed % (2**64-1))  # python global rng (MT)
 

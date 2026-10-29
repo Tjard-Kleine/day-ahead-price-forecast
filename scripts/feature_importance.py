@@ -15,7 +15,7 @@ def main():
     data_config = load_config("data")
 
     print("Loading preprocessed data...")
-    train_ds, valid_ds = load_datasets(config, data_config)
+    train_ds, valid_ds, _ = load_datasets(config, data_config)
 
     def ds_to_numpy(ds):
         X_list, y_list = [], []

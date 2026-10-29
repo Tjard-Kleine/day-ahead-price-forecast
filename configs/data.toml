@@ -5,8 +5,10 @@ path = "data/raw/energy_ger.parquet"
 [preprocessing]
 datetime_col = "Date"
 data_interpolation_method = "linear"
-# everything before this timestamp is used for training, everything after for validation
-valid_cutoff_datetime = "2025-01-01 00:00:00"
+# train: everything before valid_cutoff_datetime, validation: up to test_cutoff_datetime, test: the rest
+# models and features are only compared on the validation split, the test split is evaluated once at the very end
+valid_cutoff_datetime = "2024-10-01 00:00:00"
+test_cutoff_datetime = "2025-01-01 00:00:00"
 
 # expected update frequency of each column, limits how far missing values are forward-filled
 [preprocessing.resolution_map]
@@ -50,7 +52,7 @@ valid_cutoff_datetime = "2025-01-01 00:00:00"
 
 # aggregation of the 15-min rows into hourly values
 [preprocessing.aggregation_methods_map]
-"Spot" = "sum"
+"Spot" = "mean"  # hourly price repeated in every quarter hour
 "pumped hydro conso" = "sum"
 "cross-border trade" = "sum"
 "nuclear" = "sum"

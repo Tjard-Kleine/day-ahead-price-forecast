@@ -15,6 +15,8 @@ batch_size = 64
 lr = 1e-4
 weight_decay = 1e-4
 epochs = 70
+# fixed for reproducibility, vary it (train --seed) to measure the run-to-run noise
+seed = 1
 
 [net_params]
 hidden_dim = 256
