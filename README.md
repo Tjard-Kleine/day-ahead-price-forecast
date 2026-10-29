@@ -35,6 +35,9 @@ Test split Q1 2025, evaluated once (`reports/test_results.md`), errors in €/MW
 The validation quarter Q4 2024 was much more volatile: there the final model reaches 17.6 €/MWh against 37.9 for the
 prices of the day before.
 
+More analyses of the test split, such as the whole quarter hour by hour, the errors per weekday and price level, their
+distribution and why the ensemble works, are in [notebooks/03_results.ipynb](notebooks/03_results.ipynb).
+
 ## The task
 
 - **Forecast time:** 12:00 on day D-1, the closing time of the day-ahead auction.
