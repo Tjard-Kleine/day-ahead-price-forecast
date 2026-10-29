@@ -14,6 +14,7 @@ from typing import Callable, Optional
 import numpy as np
 import pandas as pd
 import torch
+from scipy.stats import norm
 from torch.utils.data import DataLoader
 
 from spotforecast.config import PROJECT_ROOT, load_config
@@ -112,6 +113,21 @@ def runs_with_features(config: dict) -> dict[str, dict]:
     return runs
 
 
+def seed_runs(config: dict) -> dict[str, dict]:
+    """The runs in models/ with exactly the config apart from the seed."""
+    without_seed = lambda c: {k: v for k, v in c.items() if k != "seed"}
+    return {r: c for r, c in runs_with_features(config).items() if without_seed(c) == without_seed(config)}
+
+
+def diebold_mariano(pred_a: np.ndarray, pred_b: np.ndarray, y: np.ndarray) -> tuple[float, float]:
+    """Diebold-Mariano test on the daily mean absolute errors of two forecasts of shape (days, hours), the variant for
+    day-ahead prices of Lago et al. (2021). Returns the statistic and the one-sided p-value of "a is more accurate than
+    b"; a negative statistic means a has the smaller errors."""
+    loss_diff = np.abs(pred_a - y).mean(axis=1) - np.abs(pred_b - y).mean(axis=1)
+    statistic = loss_diff.mean() / np.sqrt(loss_diff.var(ddof=1) / len(loss_diff))
+    return float(statistic), float(norm.cdf(statistic))
+
+
 def mean_forecast(runs: dict[str, dict], data_config: dict, split: str, device: torch.device
                   ) -> tuple[np.ndarray, pd.DatetimeIndex]:
     """The mean of the scaled spot price forecasts of several runs with the same features, and the forecast days. The
@@ -170,8 +186,7 @@ def main():
     if args.ensemble:
         # averaging the forecasts of several runs smooths out the noise of the single runs
         runs = runs_with_features(config)
-        without_seed = lambda c: {k: v for k, v in c.items() if k != "seed"}
-        seeds = {r: c for r, c in runs.items() if without_seed(c) == without_seed(config)}
+        seeds = seed_runs(config)
         ridge_pred = forecasts["ridge"](X, Y)
         for name, members in [(f"lstm, seeds of the config ({len(seeds)} runs)", seeds),
                               (f"lstm, all runs with these features ({len(runs)})", runs)]:

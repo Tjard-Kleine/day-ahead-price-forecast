@@ -18,7 +18,8 @@ Day-ahead task: at 12:00 on D-1 the 24 prices of D are forecast, with the measur
 | LSTM with the training of step 4, base features | 23.55 ± 0.22 | 52.5 |
 | LSTM, current config (step 5), 3 seeds | 18.68 ± 0.43 | 48.6 |
 | LSTM, mean forecast of 18 runs (step 6) | 18.0 | 48.0 |
-| **Mean of the 18 LSTM runs and Ridge, 50/50 (step 6)** | **17.5** | **47.1** |
+| Mean of the 18 LSTM runs and Ridge, 50/50 (step 6) | 17.5 | 47.1 |
+| **Final model: mean of the 3 seeds of the current config and Ridge, 50/50 (step 6)** | **17.6** | **47.3** |
 
 - All numbers are an upper bound for real forecasts, because the values of day D are measurements.
 - The validation quarter is volatile: mean price 102.6, std 70.6, max 936 €/MWh (Dunkelflaute on 11 and 12 December 2024). These two days make up more than half of the squared error.
@@ -133,7 +134,8 @@ The numbers are the average effect of adding the group to any combination withou
 | **All 18 runs + Ridge, 50/50** | **17.5** | **−1.18** | **47.1** | 8.2 | 17.8 | 24.5 | 19.4 |
 
 - LSTM and Ridge make different errors: their mean keeps the LSTM's level at night and beats both during the day. MSE (scaled) 1.45, the best so far.
-- [ ] Measure "3 seeds + Ridge" — **next step** (`evaluate --ensemble` now shows "+ ridge" for every ensemble). The 18-run variant contains the finalists chosen on the validation split and is slightly flattered. If "3 seeds + Ridge" is within 0.5 of "18 runs + Ridge", the simpler one becomes the final model: nothing in it is chosen on the validation split, and step 7 has to retrain 3 runs instead of 18.
+- [x] "3 seeds + Ridge": **17.6** (RMSE 47.3, MSE scaled 1.46), only 0.1 behind "18 runs + Ridge" (17.5), which contains the finalists chosen on the validation split and is slightly flattered.
+- [x] Decision, **the final model is frozen: the mean of the forecasts of the LSTM of `configs/lstm.toml` with the seeds 1, 2 and 3 and of Ridge, 50/50.** It is the simpler of the two, nothing in it is chosen on the validation split, and step 7 retrains 3 runs instead of 18.
 
 | Hyperparameter | Search range | Current config |
 |---|---|---|
@@ -152,9 +154,10 @@ Done when the best model is chosen. It does not have to be the LSTM.
 
 ### 7. Final evaluation and write-up
 
-- [ ] Freeze the final model (an ensemble of LSTM runs and Ridge, see step 6) and the procedure before the test split is touched.
-- [ ] Retrain it on train + validation (the validation quarter holds the most recent prices and the December spikes). Without a validation split there is no early stopping, so every LSTM run trains for a fixed number of epochs: the best epoch of its validation run. Ridge is refitted on the same data. Needs a small extension of `train.py`.
-- [ ] Evaluate it once on the test split (Q1 2025), together with the baselines and Ridge.
+- [x] Freeze the final model and the procedure before the test split is touched (step 6).
+- [x] Code: `python -m spotforecast.final` retrains the final model on train + validation (the validation quarter holds the most recent prices and the December spikes) and evaluates it once on the test split. Without a validation split there is no early stopping: every LSTM trains for the median best epoch of the validation runs of the config and keeps its last epoch; the learning rate schedule follows the training loss. Ridge is refitted on the same data. The report goes to `reports/test_results.md`: the baselines, Ridge, the single seeds, their mean and the final model, with the error distribution and Diebold-Mariano tests against Ridge, the LSTM mean and day D-1. The final models are saved in `models/final/`, apart from the validation runs. When the report exists, the command only shows it, a second evaluation needs `--force`.
+- [ ] Dry run on Colab — **next step**: `--dry-run` runs the same procedure on train → validation and saves nothing. It checks that everything runs and that the fixed number of epochs keeps the validation result of the early-stopped runs (17.6). If it is clearly worse (by more than about 0.5), the procedure is changed before the test split is touched.
+- [ ] Evaluate once on the test split (Q1 2025). Expectation: Q1 2025 was calmer than Q4 2024, so a MAE of about 14 to 15 €/MWh and a scaled MSE of about 0.5 to 0.6.
 - [ ] Report: comparison with the baselines, error per hour of the day and per price level, the distribution of the errors (median, share of hours within 10 and 20 €/MWh), the spike days separately, a Diebold-Mariano test against Ridge. State clearly that the inputs of day D are perfect forecasts.
 - [ ] Optional: probabilistic forecasts (e.g. the 10 %, 50 % and 90 % quantiles), which show when the model is unsure, e.g. before a Dunkelflaute.
 
@@ -199,6 +202,20 @@ Step 6, the ensemble of the trained runs (a few minutes, nothing is trained):
 !python -m spotforecast.evaluate --ensemble
 ```
 
+Step 7, first the dry run on train → validation (about 2 minutes, nothing is saved, the test split is not touched):
+
+```python
+%cd /content/day-ahead-price-forcast
+!git pull
+!python -m spotforecast.final --dry-run
+```
+
+Then, only if the dry run is fine and only once, the evaluation on the test split:
+
+```python
+!python -m spotforecast.final
+```
+
 ## Expected accuracy
 
 Validation MAE in €/MWh, with the inputs of day D as perfect forecasts:
@@ -209,6 +226,7 @@ Validation MAE in €/MWh, with the inputs of day D as perfect forecasts:
 | Measured: Ridge, selected features | 20.4 | −46 % |
 | Measured: LSTM, current config | 18.7 | −51 % |
 | Measured: 18 LSTM runs + Ridge (step 6) | 17.5 | −54 % |
+| Measured: final model, 3 seeds + Ridge (step 6) | 17.6 | −54 % |
 
 - Tuning brought nothing measurable, the ensemble with Ridge brought 1.2 €/MWh. The estimate of 17–18.5 after step 6 held.
 - The scaled validation MSE of the ensemble is 1.45 (RMSE 47.1). It will hardly fall below 1 unless a model foresees the December spikes.

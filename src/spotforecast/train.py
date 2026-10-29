@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import pandas as pd
 from datetime import datetime
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import LRScheduler, CosineAnnealingLR, ReduceLROnPlateau
 from typing import Callable, Optional
@@ -29,7 +29,8 @@ def fit(model, train_loader, val_loader, optimizer, criterion, epochs, writer, d
         epoch_callback: Optional[Callable[[int, nn.Module], None]]=None) -> int:
     """Trains the model and returns the epoch with the best validation loss. With patience > 0 the training stops after
     that many epochs without a better validation loss. epoch_callback(epoch, model) is called after every epoch, e.g.
-    to stop a hyperparameter search trial early by raising an exception."""
+    to stop a hyperparameter search trial early by raising an exception. Without a val_loader (the final training on
+    train + validation) all epochs are trained and the model of the last one is kept."""
     best_val_loss = torch.inf
     best_epoch = 0
     eps = 1e-4
@@ -54,50 +55,58 @@ def fit(model, train_loader, val_loader, optimizer, criterion, epochs, writer, d
 
         avg_train_loss = train_loss_acc / train_batch_num_acc
 
-        model.eval()
-        val_loss_acc = 0.0
-        val_batch_num_acc = 0.0
-        with torch.no_grad():
-            for x, y in val_loader:
-                x, y = transform_batch_fn(x, y, device, train=False)
+        if val_loader is not None:
+            model.eval()
+            val_loss_acc = 0.0
+            val_batch_num_acc = 0.0
+            with torch.no_grad():
+                for x, y in val_loader:
+                    x, y = transform_batch_fn(x, y, device, train=False)
 
-                pred = model(x)
-                loss = criterion(pred, y)
+                    pred = model(x)
+                    loss = criterion(pred, y)
 
-                val_loss_acc += loss.item() * len(y)
-                val_batch_num_acc += len(y)
+                    val_loss_acc += loss.item() * len(y)
+                    val_batch_num_acc += len(y)
 
-        avg_val_loss = val_loss_acc / val_batch_num_acc
-        if avg_val_loss + eps < best_val_loss:
-            print(f"+++ Found better validation loss at epoch {epoch+1}: {avg_val_loss:.4f}")
-            best_val_loss = avg_val_loss
-            best_epoch = epoch + 1
-            if save_model_path is not None:
-                state = {'model': model.state_dict(), 'opt': optimizer.state_dict()}
-                torch.save(state, save_model_path)
+            avg_val_loss = val_loss_acc / val_batch_num_acc
+            if avg_val_loss + eps < best_val_loss:
+                print(f"+++ Found better validation loss at epoch {epoch+1}: {avg_val_loss:.4f}")
+                best_val_loss = avg_val_loss
+                best_epoch = epoch + 1
+                if save_model_path is not None:
+                    state = {'model': model.state_dict(), 'opt': optimizer.state_dict()}
+                    torch.save(state, save_model_path)
 
         current_lr = optimizer.param_groups[0]['lr']
 
-        print(f"Epoch {epoch + 1}/{epochs} | Train loss: {avg_train_loss:.4f} | Val loss: {avg_val_loss:.4f} | LR: {current_lr:.2e}")
+        val_info = f" | Val loss: {avg_val_loss:.4f}" if val_loader is not None else ""
+        print(f"Epoch {epoch + 1}/{epochs} | Train loss: {avg_train_loss:.4f}{val_info} | LR: {current_lr:.2e}")
 
         if writer is not None:
             writer.add_scalar("Loss/Train", avg_train_loss, epoch)
-            writer.add_scalar("Loss/Validation", avg_val_loss, epoch)
+            if val_loader is not None:
+                writer.add_scalar("Loss/Validation", avg_val_loss, epoch)
             writer.add_scalar("Hparams/lr", current_lr)
 
-        # Adjust learning rate
+        # Adjust learning rate, without a validation split by the training loss
         if scheduler is not None:
             if isinstance(scheduler, ReduceLROnPlateau):
-                scheduler.step(avg_val_loss)
+                scheduler.step(avg_val_loss if val_loader is not None else avg_train_loss)
             else:
                 scheduler.step()
 
         if epoch_callback is not None:
             epoch_callback(epoch + 1, model)
 
-        if patience > 0 and epoch + 1 - best_epoch >= patience:
+        if patience > 0 and val_loader is not None and epoch + 1 - best_epoch >= patience:
             print(f"Early stopping: no better validation loss for {patience} epochs")
             break
+
+    if val_loader is None:
+        best_epoch = epochs
+        if save_model_path is not None:
+            torch.save({'model': model.state_dict(), 'opt': optimizer.state_dict()}, save_model_path)
 
     return best_epoch
 
@@ -133,18 +142,21 @@ def apply_overrides(config: dict, overrides: list[str]) -> None:
         set_config_value(config, key, value)
 
 
-def train(config: dict, train_ds: EnergyDataset, valid_ds: EnergyDataset, device: torch.device, save_model_path: Path,
+def train(config: dict, train_ds: Dataset, valid_ds: Optional[EnergyDataset], device: torch.device, save_model_path: Path,
           writer: Optional[SummaryWriter]=None, epoch_callback: Optional[Callable[[int, nn.Module], None]]=None
           ) -> tuple[nn.Module, int]:
     """Builds the model of the config and trains it. Returns it with the weights of its best epoch on the validation
-    split, which are saved to save_model_path, and that epoch."""
+    split, which are saved to save_model_path, and that epoch. Without a valid_ds all epochs of the config are trained
+    and the last one is kept."""
     # N.B.: using `42` is never a good idea!
     seed_torch(config["seed"], reproducible=True)
     _rng_cpu = torch.Generator()
     _rng_cpu.manual_seed(config["seed"])
 
     train_loader = DataLoader(train_ds, batch_size=config['batch_size'], shuffle=True, pin_memory=torch.cuda.is_available(), generator=_rng_cpu)
-    val_loader = DataLoader(valid_ds, batch_size=config['batch_size'], shuffle=False, pin_memory=torch.cuda.is_available(), generator=_rng_cpu)
+    val_loader = None
+    if valid_ds is not None:
+        val_loader = DataLoader(valid_ds, batch_size=config['batch_size'], shuffle=False, pin_memory=torch.cuda.is_available(), generator=_rng_cpu)
 
     n_hist_features, n_future_features = get_feature_dims(train_ds)
     model = build_model(config, n_hist_features, n_future_features, rng=_rng_cpu).to(device)
@@ -166,14 +178,19 @@ def train(config: dict, train_ds: EnergyDataset, valid_ds: EnergyDataset, device
     return model, best_epoch
 
 
+def git_commit() -> str:
+    """The short hash of the checked out commit, empty if git is not available."""
+    try:
+        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=PROJECT_ROOT,
+                              capture_output=True, text=True).stdout.strip()
+    except OSError:
+        return ""
+
+
 def log_experiment(run: str, config: dict, best_epoch: int, metrics: dict[str, dict[str, float]]):
     """Appends one row with the config and the results of a run to logs/experiments.csv."""
-    try:
-        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=PROJECT_ROOT,
-                                capture_output=True, text=True).stdout.strip()
-    except OSError:
-        commit = ""
-    row = {"time": datetime.now().isoformat(timespec="seconds"), "run": run, "commit": commit, "best_epoch": best_epoch}
+    row = {"time": datetime.now().isoformat(timespec="seconds"), "run": run, "commit": git_commit(),
+           "best_epoch": best_epoch}
     for key, value in config.items():
         if isinstance(value, dict):
             row.update(value)
