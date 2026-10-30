@@ -21,3 +21,17 @@ exclude_days = []
 
 # the mean forecast of one model per seed (they differ in the subsampled rows and columns)
 seeds = [1, 2, 3]
+
+# trial 48 of the search python -m spotforecast.tune_lgbm (logs/optuna_lgbm_v2.log), exactly as it was confirmed with
+# 3 seeds: 13.43 EUR/MWh on the validation year against 13.93 with the settings of the feature selection (LGBM_PARAMS),
+# every seed at least 0.5 better. More and slower trees with more leaves, stronger subsampling of the rows and some L2
+# regularization. Not rounded: rounded to 3 digits the subsamples change and the MAE is about 13.5
+[params]
+n_estimators = 1105
+learning_rate = 0.022340188465578614
+num_leaves = 122
+min_child_samples = 6
+subsample = 0.6867119942978767
+colsample_bytree = 0.9231544244272338
+reg_lambda = 2.0240598520556343
+objective = "regression"

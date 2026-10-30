@@ -1,0 +1,45 @@
+{
+  "config": {
+    "model_name": "lgbm_v2",
+    "data": "data_smard",
+    "features": [
+      "Spot",
+      "forecast residual load",
+      "price AT",
+      "price BE",
+      "price CH",
+      "price CZ",
+      "price DK1",
+      "price FR",
+      "price NL",
+      "AT forecast load",
+      "AT forecast onshore wind",
+      "AT forecast solar"
+    ],
+    "targets": [
+      "Spot",
+      "forecast residual load",
+      "AT forecast load",
+      "AT forecast onshore wind",
+      "AT forecast solar"
+    ],
+    "forecast_history": 192,
+    "forecast_horizon": 24,
+    "exclude_days": [],
+    "seeds": [
+      1,
+      2,
+      3
+    ],
+    "params": {
+      "n_estimators": 1105,
+      "learning_rate": 0.022340188465578614,
+      "num_leaves": 122,
+      "min_child_samples": 6,
+      "subsample": 0.6867119942978767,
+      "colsample_bytree": 0.9231544244272338,
+      "reg_lambda": 2.0240598520556343,
+      "objective": "regression"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+# Phase 3 (ROADMAP.md): the LSTM of model v2 on the data with the fuel prices. Everything else is that of
+# configs/lstm_v2.toml; the feature groups, among them the fuel prices, are added with
+# --selection feature_selection_v3 --groups ...
+base = "lstm_v2"
+
+model_name = "energy_lstm_v3"
+data = "data_v3"

@@ -14,6 +14,7 @@ import pytest
 from spotforecast.config import PROJECT_ROOT, load_config
 from spotforecast.data.dataset import EnergyDataset, fit_trimmed_scaler, load_datasets
 from spotforecast.data.features import add_columns_, get_calendar_features, source_columns, with_derived_features
+from spotforecast.data.fuel import FUEL_PRICES, hourly
 from spotforecast.data.smard import MEASURED, NEIGHBOUR_PRICES
 from spotforecast.evaluate import diebold_mariano
 
@@ -65,12 +66,36 @@ def test_derived_features_need_their_sources():
     assert with_derived_features(["Spot", "forecast solar"]) == ["Spot", "forecast solar", "Spot_roll_168"]
 
 
-@pytest.mark.parametrize("name", ["lstm_v2", "lgbm_v2"])
+MEASURED_OR_FUEL = set(MEASURED) | set(FUEL_PRICES) | {"residual load"}  # residual load: computed from measured values
+
+
+@pytest.mark.parametrize("name", ["lstm_v2", "lgbm_v2", "lstm_v3"])
 def test_v2_uses_only_what_is_known_at_noon_before_the_day(name):
     config = load_config(name)
-    measured = set(MEASURED) | {"residual load"}  # computed from measured values
-    assert not measured & set(config["features"]), "measured values must be shifted, e.g. <column>_lag12"
-    assert not (measured | set(NEIGHBOUR_PRICES)) & set(config["targets"][1:]), "no inputs of day D from the auction"
+    assert not MEASURED_OR_FUEL & set(config["features"]), "measured values must be shifted, e.g. <column>_lag12"
+    assert not (MEASURED_OR_FUEL | set(NEIGHBOUR_PRICES)) & set(config["targets"][1:]), \
+        "no inputs of day D from the auction"
+
+
+@pytest.mark.parametrize("name", ["feature_selection_v2", "feature_selection_v3"])
+def test_v2_feature_groups_use_only_what_is_known_at_noon_before_the_day(name):
+    for group in load_config(name)["groups"].values():
+        assert not MEASURED_OR_FUEL & set(group["features"])
+        assert not (MEASURED_OR_FUEL | set(NEIGHBOUR_PRICES)) & set(group["future"])
+
+
+def test_fuel_prices_are_known_from_the_next_day():
+    daily = pd.Series([10.0, 20.0], index=pd.to_datetime(["2025-03-03", "2025-03-04"]), name="gas price")
+    hours = pd.Series(pd.date_range("2025-03-04", periods=48, freq="h", tz="Europe/Berlin"))
+    values = hourly(daily, hours)
+    assert (values[:24] == 10).all() and (values[24:] == 20).all()
+
+
+def test_a_config_extends_its_base():
+    config = load_config("data_v3")
+    assert config["path"][1] == "data/raw/fuel.parquet"
+    assert config["preprocessing"]["resolution_map"]["Spot"] == "hour"  # from configs/data_smard.toml
+    assert config["preprocessing"]["resolution_map"]["gas price"] == "day"
 
 
 def test_source_columns_of_derived_features():

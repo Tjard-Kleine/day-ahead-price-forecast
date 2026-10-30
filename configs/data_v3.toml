@@ -1,0 +1,15 @@
+# The data of phase 3 (ROADMAP.md): the SMARD data of phase 2 and the daily fuel prices, which are written hourly next
+# to it by python -m spotforecast.data.fuel and are not in the repository (data/README.md). Splits, columns and their
+# preprocessing as in configs/data_smard.toml. A model config uses this data with data = "data_v3"
+base = "data_smard"
+
+path = ["data/raw/smard.parquet", "data/raw/fuel.parquet"]
+
+# a fuel price changes once per trading day; a model may use them only shifted, e.g. "gas price_lag12"
+[preprocessing.resolution_map]
+"gas price" = "day"
+"CO2 price" = "day"
+
+[preprocessing.aggregation_methods_map]
+"gas price" = "mean"
+"CO2 price" = "mean"

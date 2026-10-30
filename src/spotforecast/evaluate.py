@@ -158,7 +158,9 @@ def lgbm_forecast(config: dict, split: str) -> tuple[np.ndarray, EnergyDataset]:
         train_ds, valid_ds, test_ds = load_datasets(config, load_data_config(config))
     ds = valid_ds if split == "val" else test_ds
     (X_train, Y_train), (X, Y) = stack_windows(train_ds), stack_windows(ds)
-    return np.mean([predict_lgbm(fit_lgbm(X_train, Y_train, seed), X, Y) for seed in config["seeds"]], axis=0), ds
+    params = config.get("params", {})
+    return np.mean([predict_lgbm(fit_lgbm(X_train, Y_train, seed, **params), X, Y) for seed in config["seeds"]],
+                   axis=0), ds
 
 
 def main():

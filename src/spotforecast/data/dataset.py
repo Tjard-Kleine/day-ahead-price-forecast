@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import pyarrow.parquet as pq
 import torch
 from typing import Optional
 from datetime import datetime
@@ -51,10 +52,17 @@ class EnergyDataset(Dataset):
         return x, y
 
 
-def load_from_parquet(path: str, input_cols: list[str], output_cols: Optional[list[str]]=None, additional_cols:Optional[list[str]]=None):
+def data_paths(data_config: dict) -> list:
+    """The parquet files of a data config: "path" is one file or a list of files with the same hours."""
+    paths = data_config["path"]
+    return [PROJECT_ROOT / _p for _p in ([paths] if isinstance(paths, str) else paths)]
+
+
+def load_from_parquet(path, input_cols: list[str], output_cols: Optional[list[str]]=None, additional_cols:Optional[list[str]]=None):
     """Loads a dataset from a parquet file.
 
-    :param str path: the path to the dataset
+    :param path: the path to the dataset, or a list of paths of files with the same rows, which are joined on the first
+        of the additional_cols (the datetime column); every column is taken from the first file that has it
     :param list[str] input_cols: the list of columns to use for the input
     :param list[str] additional_cols: list of columns that will be used intermediately
     """
@@ -62,7 +70,16 @@ def load_from_parquet(path: str, input_cols: list[str], output_cols: Optional[li
     if output_cols is not None:
         _load_cols = _load_cols + [_oc for _oc in output_cols if _oc not in _load_cols]
 
-    return pd.read_parquet(path=path, columns=_load_cols)
+    if not isinstance(path, (list, tuple)):
+        return pd.read_parquet(path=path, columns=_load_cols)
+    _key, df = additional_cols[0], None
+    for _path in path:
+        _cols = [_c for _c in _load_cols if _c in pq.read_schema(_path).names and (df is None or _c not in df)]
+        if df is None:
+            df = pd.read_parquet(path=_path, columns=_cols)
+        elif len(_cols) > 0:
+            df = df.merge(pd.read_parquet(path=_path, columns=[_key] + _cols), on=_key, how="left", validate="one_to_one")
+    return df[_load_cols]
 
 
 def before_cutoff(dates: pd.Series, cutoff_datetime: str) -> pd.Series:
@@ -179,7 +196,7 @@ def build_datasets(df: pd.DataFrame, features: list[str], targets: list[str], wi
 def load_datasets(config: dict, data_config: dict) -> tuple[EnergyDataset, EnergyDataset, EnergyDataset]:
     """Builds the train, validation and test datasets from the model config and the data config."""
     return get_preprocessed_ts_data(
-        path=PROJECT_ROOT / data_config["path"],
+        path=data_paths(data_config),
         features=config["features"],
         targets=config["targets"],
         window_size=config["forecast_history"],

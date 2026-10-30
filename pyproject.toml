@@ -16,8 +16,10 @@ dependencies = [
     "tensorboard",
     "matplotlib",
     "holidays",  # public holidays of the German states for the calendar features
-    "lightgbm",  # second model of the feature selection
+    "lightgbm",  # model v2 and the second model of the feature selection
     "optuna",  # hyperparameter search
+    "openpyxl",  # the EEX auction reports (xlsx) of the fuel prices
+    "xlrd",  # the older EEX auction reports (xls)
 ]
 
 [project.optional-dependencies]

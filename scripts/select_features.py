@@ -21,7 +21,7 @@ import pandas as pd
 from sklearn.linear_model import RidgeCV
 
 from spotforecast.config import PROJECT_ROOT, load_config, load_data_config
-from spotforecast.data.dataset import build_datasets, load_preprocessed_data
+from spotforecast.data.dataset import build_datasets, data_paths, load_preprocessed_data
 from spotforecast.data.features import add_feature_groups
 from spotforecast.models.baselines import fit_lgbm, predict_lgbm, ridge_features, stack_windows
 
@@ -88,7 +88,7 @@ def evaluate_combinations(config: dict, data_config: dict, selection: dict, resu
     columns = list(dict.fromkeys(all_features + all_targets))
     print("Loading and preprocessing the data once for all groups...")
     with contextlib.redirect_stdout(io.StringIO()):  # the preprocessing log is long
-        df = load_preprocessed_data(PROJECT_ROOT / data_config["path"], columns, preprocess_kwargs)
+        df = load_preprocessed_data(data_paths(data_config), columns, preprocess_kwargs)
 
     combos = [c for r in range(len(group_names) + 1) for c in itertools.combinations(group_names, r)]
     rows = pd.read_csv(results_path).to_dict("records") if results_path.exists() else []

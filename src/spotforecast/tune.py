@@ -23,7 +23,7 @@ from optuna.storages import JournalStorage
 from optuna.storages.journal import JournalFileBackend, JournalFileOpenLock
 
 from spotforecast.config import PROJECT_ROOT, load_config, load_data_config
-from spotforecast.data.dataset import build_datasets, load_preprocessed_data
+from spotforecast.data.dataset import build_datasets, data_paths, load_preprocessed_data
 from spotforecast.evaluate import evaluate_model
 from spotforecast.train import apply_overrides, set_config_value, train
 
@@ -75,7 +75,7 @@ def search(config: dict, data_config: dict, study_name: str, n_trials: int, devi
     test_cutoff = preprocess_kwargs.pop("test_cutoff_datetime")
     print("Loading and preprocessing the data...")
     with contextlib.redirect_stdout(io.StringIO()):  # the preprocessing log is long
-        df = load_preprocessed_data(PROJECT_ROOT / data_config["path"],
+        df = load_preprocessed_data(data_paths(data_config),
                                     list(dict.fromkeys(config["features"] + config["targets"])), preprocess_kwargs)
 
     @functools.cache

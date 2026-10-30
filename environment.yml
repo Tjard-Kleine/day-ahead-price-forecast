@@ -16,6 +16,8 @@ dependencies:
   - holidays
   - lightgbm
   - optuna
+  - openpyxl
+  - xlrd
   - pytest
   - pip
   - pip:

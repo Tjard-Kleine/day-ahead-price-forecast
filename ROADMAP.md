@@ -247,19 +247,144 @@ Model v1 is good on normal days; its weak spots are price spikes, and it used me
   - **The base wins among the LSTMs**: neither group set is better, so `configs/lstm_v2.toml` keeps the base. With the neighbours' prices the LSTM overfits, its best epoch is about 9.
   - **LightGBM is the best model of v2**: 0.7 €/MWh better than the LSTM with the same base, 1.7 better with the neighbours' prices and Austria (RMSE 29.2 against 30.6 of the LSTM base). Ridge stays 0.7 behind the LSTM.
   - LightGBM is now a model of the package (`fit_lgbm`, `predict_lgbm` in `src/spotforecast/models/baselines.py`); the feature selection uses the same functions and reproduces its numbers exactly.
-- [ ] **V6. Ensemble and final evaluation** — **on Colab, next step**. Decision: LightGBM leads now; checked on the validation year is whether the mean with the 3 LSTM seeds (and Ridge) beats LightGBM alone by at least 0.5 €/MWh, with fixed equal weights so that nothing is fitted on the validation year. Then the winner is frozen and evaluated once on the test period.
-  - `configs/lgbm_v2.toml`: LightGBM with the base, the neighbours' prices and the Austrian forecasts, the mean of 3 seeds. `python -m spotforecast.evaluate --ensemble --config lstm_v2 --lgbm lgbm_v2` adds LightGBM alone, + Ridge, + the LSTM seeds and + both. A test checks its information set like that of the LSTM.
-  - Locally (no LSTM v2 models here, they are on Drive): the single seeds give 14.12, 14.14 and 14.06, their mean forecast **13.9** (RMSE 29.2); + Ridge 14.1 (RMSE 28.5). Fitting the 3 seeds takes about 30 seconds.
-- [ ] **V7. Report**: test results, figures, README (including the statement about the upper bound).
+- [ ] **V6. Ensemble and final evaluation**. LightGBM leads now; checked on the validation year was whether the mean with the LSTM seeds (and Ridge) beats LightGBM alone by at least 0.5 €/MWh, with fixed equal weights so that nothing is fitted on the validation year.
+  - `configs/lgbm_v2.toml`: LightGBM with the base, the neighbours' prices and the Austrian forecasts, the mean of 3 seeds (single seeds 14.12, 14.14, 14.06). `python -m spotforecast.evaluate --ensemble --config lstm_v2 --lgbm lgbm_v2` adds LightGBM alone, + Ridge, + the LSTM seeds and + both. A test checks its information set like that of the LSTM.
+
+| Validation year, €/MWh (Colab) | MAE | RMSE |
+|---|---|---|
+| Ridge | 16.6 | 30.8 |
+| LSTM, mean of the 5 base runs | 15.8 | 30.4 |
+| LSTM + Ridge | 14.6 | 29.0 |
+| **LightGBM, mean of 3 seeds** | **13.9** | 29.2 |
+| LightGBM + Ridge | 14.1 | 28.5 |
+| LightGBM + LSTM | 13.6 | 28.8 |
+| LightGBM + LSTM + Ridge | 13.6 | 28.3 |
+
+  - [x] **Decision: LightGBM alone is model v2.** The ensembles are 0.3 €/MWh better, less than the 0.5 of the decision rule. LightGBM alone also needs no GPU and refits in a few minutes on a laptop CPU, which keeps the later live forecast and the regular retraining simple.
+  - [x] `python -m spotforecast.final_v2` refits LightGBM on train + validation (a fixed number of trees, so nothing else changes), evaluates it once on the test period and writes `reports/test_results_v2.md`, the models go to `models/final_v2/`; with the report present it only shows it. The dry run (`--dry-run`, train → validation, nothing saved) gives 13.9 as above; Diebold-Mariano against Ridge −6.6 (p < 0.0001); per quarter 12.4, 12.6, 17.5 (the Dunkelflaute) and 13.2.
+  - [x] **Tuning LightGBM** before the test (decision of the user), locally: `python -m spotforecast.tune_lgbm --trials 60` (25 minutes; log `logs/tune_lgbm_v2.log`, trials `logs/optuna_lgbm_v2.log`). Every trial fits on the training split and is validated on the whole validation year like the dry run, one seed per trial (the seeds differ by only about 0.05). Searched: number of trees, learning rate, leaves, minimum leaf size, row and column subsampling, L2 regularization and the loss (squared error, Huber, L1). Trial 0 is the current config. Afterwards the 5 best trials were confirmed with all 3 seeds (`--confirm`).
+
+| Validation year, MAE in €/MWh | seed 1 | seed 2 | seed 3 | mean forecast | RMSE |
+|---|---|---|---|---|---|
+| settings of the feature selection | 14.15 | 14.15 | 14.03 | 13.93 | 29.1 |
+| **trial 48** | 13.52 | 13.58 | 13.46 | **13.43** | 28.1 |
+| trial 55 | 13.58 | 13.55 | 13.49 | 13.47 | 28.2 |
+| trials 45, 42, 51 | | | | 13.50 to 13.53 | |
+
+  - The top is flat: the 10 best trials lie between 13.52 and 13.61 with one seed, all with about 700 to 1500 slower trees (learning rate 0.013 to 0.022), many leaves (77 to 128), small leaves (5 to 9 samples), row subsampling of about 0.65 and some L2 regularization. The squared error wins; Huber and L1 do not help the MAE. Importance: column and row subsampling 0.20 each, number of trees 0.16, learning rate 0.13.
+  - **Trial 48 passes the decision rule** (every seed at least 0.5 better, the mean forecast exactly 0.50) and is in `[params]` of `configs/lgbm_v2.toml`, unrounded: rounded to 3 digits the subsamples change and the MAE is about 13.5, so part of the gain is the luck of the best of 60 trials; on the test period about 0.4 can be expected. The dry run reproduces 13.4 (RMSE 28.0; per quarter 11.8, 11.8, 17.0, 13.2; Diebold-Mariano against Ridge −7.5). The 3 seeds now take about 2 minutes to fit instead of 30 seconds.
+  - [x] **The single test evaluation** (2026-10-29, locally, `python -m spotforecast.final_v2`, report `reports/test_results_v2.md`, models `models/final_v2/`): 1 April 2025 to 28 October 2026, 573 days, trained on 2352 days until March 2025. The test period is used up.
+
+| Test period, €/MWh | MAE | RMSE | median AE |
+|---|---|---|---|
+| day D-1 | 29.0 | 45.4 | 16.4 |
+| **Ridge** (same features) | **16.6** | **26.5** | 11.5 |
+| **LightGBM, final model v2** | **16.9** | 27.3 | **10.5** |
+
+| MAE per quarter | 2025 Q2 | Q3 | Q4 | 2026 Q1 | Q2 | Q3 | Q4 (27 days) |
+|---|---|---|---|---|---|---|---|
+| LightGBM | 12.8 | 11.1 | 11.2 | 11.0 | 19.3 | 28.7 | 39.9 |
+| Ridge | 15.2 | 15.1 | 13.9 | 13.1 | 21.5 | 19.9 | 20.2 |
+
+  - **LightGBM is not better than Ridge over the whole test period** (Diebold-Mariano 0.56, p = 0.71). For 12 months, until April 2026, it is clearly better (11 to 13 against 13 to 15, as on the validation year); from May 2026 it breaks down.
+  - **Diagnosis** (after the evaluation, the model stays as it is): no data error (no gaps, no frozen values). From May 2026 the price rises from 79 to 163 €/MWh (October), while the forecast residual load stays low (21 to 26 GW): the price is high at a low residual load, most likely because of higher fuel prices (gas, CO₂), which v2 does not have. LightGBM learned the relation between the residual load and the price of 2018 to 2025 and cannot extrapolate it: its bias grows from −10 €/MWh (May, June) to −28 (August) and −36 (October). Ridge, linear in the prices of D-1, carries the new level forward and stays almost unbiased (−2 to +6). The model was also not retrained for 18 months.
+  - Consequences: fuel prices and a regular retraining are needed (they were already on the list for later); trees need a model of the price level (e.g. the target relative to the price of D-1) or a linear part.
+- [ ] ~~**V7. Report**~~: replaced by phase 3 (decision of the user on 2026-10-30): v2 is not fundamentally better, so the work starts again with more data. The documentation is a description of the method, not a comparison of models.
 - [ ] Research: when do the transmission system operators publish their day-ahead forecasts, before or after 12:00 on D-1? If after, the report has to say so.
-- Later: a live forecast for tomorrow (for the portfolio web view; needs `predict` without an actual price and the forecasts of tomorrow) and a regular retraining, because the market changes; fuel prices; power plant outages and the neighbours' load from ENTSO-E; a probability of price spikes.
+- Later: a live forecast for tomorrow (for the portfolio web view; needs `predict` without an actual price and the forecasts of tomorrow) and a regular retraining, because the market changes; power plant outages and the neighbours' load from ENTSO-E; a probability of price spikes.
+
+## Phase 3: a new start with fuel prices and weather (planned)
+
+Decided by the user on 2026-10-30, after the test of v2:
+
+- **Start again** instead of polishing v2, with **fuel prices** (gas, CO₂, possibly coal) and **weather data**; the user downloads what cannot be fetched automatically. A **quarter-hourly resolution** (the auction sets quarter-hourly prices since 1 October 2025) is an option to be weighed.
+- **Documentation: the method, not a comparison.** The repository describes what was done and why, also mathematically (task and information set, scaling, models, losses, evaluation and test), and why one approach worked better than another, e.g. why trees cannot carry a new price level forward and a linear model can.
+
+Lessons of phase 2 that the new start builds on:
+
+- The price level changes (2026: +60 % at the same residual load). A model must either see its drivers (fuel prices) or carry the level of the last days forward (a target relative to the price of D-1, as the residual anchor of the LSTM, or a linear part), and it has to be retrained regularly.
+### Decisions
+
+- **Hourly resolution** for now: quarter-hourly prices exist only since October 2025, too little to train on; the hourly price is the mean of the quarter hours. A model of the profile within the hour can follow later.
+- **Data**: fuel prices first (gas TTF and CO₂ from the EEX auctions, fetched by a script, kept out of the repository because their terms do not clearly allow it); weather from Open-Meteo (CC BY 4.0) in a second step, with the choice between real forecasts of D-1 (only from 2024), archived short-term forecasts (from 2021/2022) and reanalysis (ERA5, only shifted); the neighbours' forecasts and power plant outages from ENTSO-E later (needs a token of the user).
+- **Splits as in v2** (decision of the user): training October 2018 to March 2024, validation April 2024 to March 2025, test from April 2025. A new model has not seen the test period, but we have: we know the price rise of 2026 and that v2 failed on it, and the plan of phase 3 follows from that. A test number of phase 3 is therefore slightly optimistic. Rules against it:
+  1. Every decision is taken on the training and validation data with the decision rule, never on the test period; the test is evaluated once at the end, as before.
+  2. The report says that the test period was already used for the evaluation of model v2. The fuel prices are not a consequence of that test: they were part of model v1, and phase 2 planned them from the start (its decision "v2 starts without them, they are added once a free source is found"); the report presents them as that plan.
+  3. Optional, as a clean confirmation: the live forecasts of the portfolio view from a fixed date on are a test that nobody has seen.
+
+### Steps of phase 3
+
+- [x] **P1. Fuel prices.** `python -m spotforecast.data.fuel` downloads the TTF gas price (Yahoo Finance, from January 2018) and the EUA auction prices (EEX, from 2012) and writes them hourly to `data/raw/fuel.parquet` (not in the repository, see `data/README.md`). Every hour holds the price of an earlier day; models use them shifted by 12 hours (`gas price_lag12`, `CO2 price_lag12`), a test checks this for every v2/v3 config and the shift itself. No gaps from October 2018 to today. The quarterly means confirm the diagnosis of v2: the gas price doubled in 2026 (30 to 46 EUR/MWh in 2025, 85 in October 2026).
+- [x] **P2. Pipeline.** `configs/data_v3.toml` extends `configs/data_smard.toml` (a config can name a `base` now) and joins `smard.parquet` and `fuel.parquet` (a data config can list several files). The splits are those of v2 (1989, 363 and 573 days).
+- [ ] **P3. Weather** (Open-Meteo): the choice of the variant (real forecasts of D-1 only from 2024; archived short-term forecasts from 2021/2022; ERA5 only shifted) is open.
+- [ ] **P4. Models on the validation year**, decided with the rules: feature groups with the rule of the feature selection, model changes with the decision rule; Ridge, LightGBM, the LSTM and their combinations, each with and without the fuel prices.
+  - [x] **P4a. Screening** (`python scripts/screen_models.py`, 45 seconds, `logs/screen_models_v3.csv`): Ridge, LightGBM (settings of the feature selection, one seed) and their mean, trained until March 2024, MAE on the validation year in €/MWh:
+
+| Features | Ridge | LightGBM | mean of both |
+|---|---|---|---|
+| base | 16.56 | 15.16 | 14.80 |
+| base + fuel | 16.30 | 14.40 | 14.16 |
+| base + neighbours (prices, Austria) | 16.89 | 14.12 | 14.12 |
+| **base + neighbours + fuel** | 16.45 | **13.71** | 13.81 |
+
+  - **The fuel prices help**: LightGBM −0.76 with the base, −0.41 with the neighbours, better in all four quarters; Ridge −0.26 and −0.44.
+  - **The target relative to day D-1 loses everywhere** on the validation year (LightGBM +1.4 to +1.6, Ridge +0.7 to +0.8). A smoother anchor does not help either (LightGBM with base + neighbours + fuel: level 13.71, same hour of D-1 15.17, mean of the last 7 days 15.51, mean of D-1 16.34): the anchor brings the noise of single days into the target, and in a year without a large level shift the trees use the prices of D-1 better as features. **Decision: the price level stays the target**; with the fuel prices the drivers of a new level are now inputs. (`fit_ridge`, `fit_lgbm` keep the option `relative`.)
+  - [x] **P4b. Feature selection** with the fuel group, locally (78 minutes; `python scripts/select_features.py --config lstm_v3 --selection feature_selection_v3`, log `logs/select_features_v3.log`, results `logs/feature_selection_v3.csv`): `configs/feature_selection_v3.toml`, the 7 groups of v2 and `fuel`, all 256 combinations, Ridge and LightGBM in the four quarterly folds of the validation year.
+
+| Mean MAE of the 4 folds, €/MWh | Ridge | LightGBM |
+|---|---|---|
+| Base only | 16.12 | 14.78 |
+| Forward selection, 1st group | **fuel** → 15.86 | **fuel** → 14.24 |
+| Forward selection, 2nd group | forecast_details → **15.67** | austria → **13.72** |
+| Best of the 256 combinations | 15.52 | 13.26 (calendar, forecast_details, neighbour_prices, austria, fuel) |
+
+| Group, average effect when added | Ridge | LightGBM |
+|---|---|---|
+| **fuel** | **−0.23, better in 93 % of the folds** | **−0.34, 77 %** |
+| neighbour_prices | −0.14, 72 % | −0.37, 89 % |
+| austria | +0.32, 31 % | −0.26, 74 % |
+| forecast_details | −0.17, 72 % | −0.08, 53 % |
+| calendar, measured_lag12, conventional_lag12, net_export_lag12 | −0.01 to −0.06 | −0.01 to +0.03 |
+
+  - **The fuel prices are the first choice of both models.** With them the neighbours' prices are no longer selected for LightGBM: on top of fuel and Austria they lower the mean by 0.13 but are better in only 2 of 4 folds. Both groups carry the price level of the coupled market, which is set by the same fuel costs, so they partly replace each other. Without fuel, the neighbours' prices were the strongest group (V4).
+  - The best combination of 256 is better than the forward selection, but picking the best of many noisy candidates flatters it; the forward selection with its rule is the decision, as in V4.
+  - [ ] **P4c. LSTM** — **on Colab, next step** — `configs/lstm_v3.toml` (the LSTM of v2 on the v3 data), 3 seeds each:
+    1. base + fuel, the first choice of both models;
+    2. base + fuel + austria, the choice of LightGBM;
+    3. base + fuel + forecast_details, the choice of Ridge.
+    The reference is the LSTM of v2 with the base, which has the same data without fuel: 15.83 ± 0.21 (V5).
+  - [ ] **P4d. Combinations** of LightGBM, LSTM and Ridge with fixed equal weights, and tuning of the winner.
+- [ ] **P5. Retraining** in the evaluation: a walk-forward over the validation year with monthly refits, as in the later live operation.
+- [ ] **P6. Final evaluation** on the test period, once.
+- [ ] **P7. Documentation of the method** (with the mathematics), figures, README.
+
+## Colab runs of phase 3
+
+P4c, the three LSTM candidates of phase 3 with 3 seeds each (9 runs, about 20 to 45 minutes on the GPU). Push the code first. The fuel prices are not in the repository, so the cell downloads them first (`data/raw/fuel.parquet`, about a minute; it needs `data/raw/smard.parquet`, which comes with `git pull`):
+
+```python
+%cd /content/spotforecast
+!git pull
+!pip install -q -e .
+!python -m spotforecast.data.fuel
+v3 = "--config lstm_v3 --selection feature_selection_v3"
+for groups in ["--groups fuel", "--groups fuel austria", "--groups fuel forecast_details"]:
+    for s in [1, 2, 3]:
+        !python -m spotforecast.train {v3} --seed {s} {groups}
+```
+
+Then, in a new cell, the comparison to send back:
+
+```python
+!python scripts/compare_runs.py --config lstm_v3 --selection feature_selection_v3
+```
 
 ## Colab runs of phase 2
 
-V6, LightGBM together with the 3 LSTM seeds of the base on the validation year (about 1 to 2 minutes; the LSTM models are on Drive, LightGBM is fitted in the cell). Push the code first:
+V6, LightGBM together with the LSTM seeds of the base on the validation year (done; about 1 to 2 minutes, the LSTM models are on Drive, LightGBM is fitted in the cell). Push the code first:
 
 ```python
-%cd /content/day-ahead-price-forcast
+%cd /content/spotforecast
 !git pull
 !pip install -q -e .
 !python -m spotforecast.evaluate --ensemble --config lstm_v2 --lgbm lgbm_v2
@@ -268,7 +393,7 @@ V6, LightGBM together with the 3 LSTM seeds of the base on the validation year (
 V5, the three LSTM candidates of model v2 with 3 seeds each (9 runs, about 20 to 45 minutes on the GPU). The data comes with `git pull`, because `data/raw/smard.parquet` is in the repository:
 
 ```python
-%cd /content/day-ahead-price-forcast
+%cd /content/spotforecast
 !git pull
 !pip install -q -e .
 v2 = "--config lstm_v2 --selection feature_selection_v2"
@@ -286,7 +411,7 @@ Then, in a new cell, the comparison to send back:
 V4, the feature selection, ran locally instead (Colab's 2 CPU cores are slower than a laptop):
 `python scripts/select_features.py --config lstm_v2 --selection feature_selection_v2`.
 
-`/content/day-ahead-price-forcast` is the folder of the existing clone, which keeps the old repository name; a new clone is called `day-ahead-price-forecast`.
+`/content/spotforecast` is the folder of the clone on Colab (a new clone without a folder name would be called `day-ahead-price-forecast`).
 
 ## Colab runs of phase 1
 
@@ -295,7 +420,7 @@ Push the code first; models/ and logs/ stay on Drive as before. A training run t
 Step 6, the search (about 20 to 30 minutes: with early stopping a trial takes 15 to 35 seconds on the Colab GPU). If Colab disconnects, run the same cell again, the search continues where it stopped. `--trials 100` would extend the same search to 100 trials:
 
 ```python
-%cd /content/day-ahead-price-forecast
+%cd /content/spotforecast
 !git pull
 !pip install -q -e .
 !python -m spotforecast.tune --trials 50
@@ -321,7 +446,7 @@ for best in candidates:
 Step 6, the ensemble of the trained runs (a few minutes, nothing is trained):
 
 ```python
-%cd /content/day-ahead-price-forecast
+%cd /content/spotforecast
 !git pull
 !python -m spotforecast.evaluate --ensemble
 ```
@@ -329,7 +454,7 @@ Step 6, the ensemble of the trained runs (a few minutes, nothing is trained):
 Step 7, first the dry run on train → validation (about 2 minutes, nothing is saved, the test split is not touched):
 
 ```python
-%cd /content/day-ahead-price-forecast
+%cd /content/spotforecast
 !git pull
 !python -m spotforecast.final --dry-run
 ```

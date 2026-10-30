@@ -22,7 +22,7 @@ def naive_forecasts(X: np.ndarray, horizon: int) -> dict[str, np.ndarray]:
     return {
         "mean": np.zeros((len(X), horizon), dtype=X.dtype),  # the training mean is 0 after scaling
         "persistence": np.repeat(X[:, -1:, 0], horizon, axis=1),
-        "day D-1": X[:, window - 24 + (j % 24), 0],
+        "day D-1": day_before(X, horizon),
         "day D-7": X[:, window - 168 + j, 0],
     }
 
@@ -32,10 +32,25 @@ def ridge_features(X: np.ndarray, Y: np.ndarray, n_lags: int=168) -> np.ndarray:
     return np.c_[X[:, -n_lags:, 0], X[:, -1, :], Y[:, :, 1:].reshape(len(Y), -1)]
 
 
-def fit_ridge(train_ds: EnergyDataset) -> RidgeCV:
-    """Linear model that forecasts all hours of the horizon at once, regularization chosen on the training data."""
+def day_before(X: np.ndarray, horizon: int=24) -> np.ndarray:
+    """The scaled spot prices of the same hours on day D-1, the last 24 hours of the history, shape (n, horizon). A
+    relative target is the change against them, so a model carries the price level of D-1 forward and only forecasts
+    the deviation from it."""
+    return X[:, -24 + np.arange(horizon) % 24, 0]
+
+
+def fit_ridge(train_ds: EnergyDataset, relative: bool=False) -> RidgeCV:
+    """Linear model that forecasts all hours of the horizon at once, regularization chosen on the training data. With
+    relative, it forecasts the change against day D-1 (predict_ridge adds it back)."""
     X, Y = stack_windows(train_ds)
-    return RidgeCV(alphas=np.logspace(-2, 4, 13)).fit(ridge_features(X, Y), Y[:, :, 0])
+    target = Y[:, :, 0] - day_before(X, Y.shape[1]) if relative else Y[:, :, 0]
+    return RidgeCV(alphas=np.logspace(-2, 4, 13)).fit(ridge_features(X, Y), target)
+
+
+def predict_ridge(model: RidgeCV, X: np.ndarray, Y: np.ndarray, relative: bool=False) -> np.ndarray:
+    """The scaled spot price forecasts of Ridge, of shape (n, horizon)."""
+    pred = model.predict(ridge_features(X, Y))
+    return pred + day_before(X, Y.shape[1]) if relative else pred
 
 
 def lgbm_table(X: np.ndarray, Y: np.ndarray, n_lags: int=168) -> tuple[np.ndarray, np.ndarray]:
@@ -49,13 +64,25 @@ def lgbm_table(X: np.ndarray, Y: np.ndarray, n_lags: int=168) -> tuple[np.ndarra
     return np.c_[day_part, hour_part, Y[:, :, 1:].reshape(n * horizon, -1)], Y[:, :, 0].reshape(-1)
 
 
-def fit_lgbm(X: np.ndarray, Y: np.ndarray, seed: int=1) -> lgb.LGBMRegressor:
-    """Gradient boosted trees on the stacked windows of the training split, one model for all hours (lgbm_table)."""
-    model = lgb.LGBMRegressor(n_estimators=300, learning_rate=0.05, subsample=0.8, subsample_freq=1,
-                              colsample_bytree=0.8, random_state=seed, verbose=-1)
-    return model.fit(*lgbm_table(X, Y))
+# the settings of the feature selection; num_leaves, min_child_samples, reg_lambda and objective are LightGBM's defaults
+LGBM_PARAMS = {"n_estimators": 300, "learning_rate": 0.05, "num_leaves": 31, "min_child_samples": 20,
+               "subsample": 0.8, "subsample_freq": 1, "colsample_bytree": 0.8, "reg_lambda": 0.0,
+               "objective": "regression"}
 
 
-def predict_lgbm(model: lgb.LGBMRegressor, X: np.ndarray, Y: np.ndarray) -> np.ndarray:
+def fit_lgbm(X: np.ndarray, Y: np.ndarray, seed: int=1, relative: bool=False, **params) -> lgb.LGBMRegressor:
+    """Gradient boosted trees on the stacked windows of the training split, one model for all hours (lgbm_table). The
+    params override LGBM_PARAMS, e.g. the [params] of configs/lgbm_v2.toml. With relative, the trees forecast the change
+    against day D-1 (predict_lgbm adds it back): a tree only outputs means of training targets, so it cannot reach a
+    price level that it has not seen, but it can reach a change that it has seen."""
+    model = lgb.LGBMRegressor(**{**LGBM_PARAMS, **params}, random_state=seed, verbose=-1)
+    table, target = lgbm_table(X, Y)
+    if relative:
+        target = target - day_before(X, Y.shape[1]).reshape(-1)
+    return model.fit(table, target)
+
+
+def predict_lgbm(model: lgb.LGBMRegressor, X: np.ndarray, Y: np.ndarray, relative: bool=False) -> np.ndarray:
     """The scaled spot price forecasts of LightGBM, of shape (n, horizon)."""
-    return model.predict(lgbm_table(X, Y)[0]).reshape(len(X), Y.shape[1])
+    pred = model.predict(lgbm_table(X, Y)[0]).reshape(len(X), Y.shape[1])
+    return pred + day_before(X, Y.shape[1]) if relative else pred

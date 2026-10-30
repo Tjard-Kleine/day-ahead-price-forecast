@@ -1,0 +1,9 @@
+# Feature groups of phase 3: those of configs/feature_selection_v2.toml (the same base, folds and decision rule) and the
+# fuel prices of data/raw/fuel.parquet. Used with --config lstm_v3 --selection feature_selection_v3.
+base = "feature_selection_v2"
+
+[groups.fuel]
+# the gas price (TTF settlement of D-2) and the CO2 price (the last EUA auction before D-1), known at 12:00 on D-1;
+# together with the residual load they give the cost of the marginal power plant
+features = ["gas price_lag12", "CO2 price_lag12"]
+future = []

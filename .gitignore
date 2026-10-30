@@ -19,6 +19,8 @@ models/*
 !models/.gitkeep
 # except the final model of step 7, without optimizer state (scripts/export_final_models.py)
 !models/final/
+# and the final LightGBM models of model v2 (python -m spotforecast.final_v2)
+!models/final_v2/
 logs/
 
 # editors / OS

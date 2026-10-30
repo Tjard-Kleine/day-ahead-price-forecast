@@ -62,6 +62,27 @@ definition, identical to its own series), the calendar (`saturday`, `sunday`, `h
 - **Not on SMARD:** weather, fuel prices (gas, coal, CO₂), load and generation of the neighbouring countries
   (ENTSO-E Transparency Platform).
 
+## Fuel prices (phase 3): `raw/fuel.parquet`
+
+`python -m spotforecast.data.fuel` downloads daily fuel prices and writes them hourly, row by row like
+`raw/smard.parquet` (`configs/data_v3.toml` joins both files on `Date`). The file is **not part of the repository**: the
+terms of the sources do not clearly allow to redistribute the data, so everyone downloads it with the command. The raw
+downloads are kept in `raw/fuel/`.
+
+| Column | Meaning | Source | Known at 12:00 on D-1 |
+|---|---|---|---|
+| `gas price` | settlement of the Dutch TTF natural gas front-month future, EUR/MWh | Yahoo Finance, ticker `TTF=F`, from January 2018, for personal use | shift 12 h: the settlement of D-2 |
+| `CO2 price` | clearing price of the EU emission allowance (EUA) primary market auctions, mean of the auctions of a day, EUR/tCO2 | EEX, EUA Primary Market Auction Reports, from 2012 | shift 12 h: the last auction before D-1 |
+
+- **Timing:** a gas settlement is set in the evening of its trading day, an auction result at about 11:00. To be safe,
+  every hour holds the last price of an *earlier* calendar day, forward-filled over weekends and holidays; shifted by
+  12 hours a model sees at 12:00 on D-1 the settlement of D-2 and the auction of D-2 or earlier.
+- **TTF instead of the German hub THE:** TTF is the European reference with a free daily history from 2018; the German
+  price follows it closely. THE publishes its own daily reference price (VTP-Index) only from October 2021.
+- **Coal** is left out: there is no free daily source, and gas and CO₂ set the marginal price most of the time.
+- The quarterly means show the driver of the price rise of 2026: the gas price doubled from 30 to 46 EUR/MWh
+  (2025) to 63 (third quarter of 2026) and 85 (October 2026).
+
 ## Course data (phase 1): `raw/energy_ger.parquet`
 
 The dataset of the university course that model v1 was trained and tested on (15-minute values, January 2023 to March
