@@ -1,0 +1,23 @@
+# LightGBM of phase 3 (ROADMAP.md, P4): gradient boosted trees on the data with the fuel prices, one model for all hours
+# of day D (fit_lgbm in src/spotforecast/models/baselines.py). The features are the forward selection of P4b: the base
+# of configs/feature_selection_v3.toml with the groups austria and fuel. The settings of the feature selection
+# (LGBM_PARAMS, no [params]): the search python -m spotforecast.tune_lgbm --config lgbm_v3 --study lgbm_v3 found only
+# about 0.2 EUR/MWh (13.61 to 13.69 against 13.86 with 3 seeds), no trial was 0.5 better with every seed.
+# Evaluated together with the LSTM: python -m spotforecast.evaluate --ensemble --config lstm_v3 --lgbm lgbm_v3
+
+model_name = "lgbm_v3"
+data = "data_v3"
+
+# history features: the prices of D-1, the forecasts, the gas and CO2 price known at 12:00 on D-1
+features = ["Spot", "forecast residual load", "AT forecast load", "AT forecast onshore wind", "AT forecast solar",
+            "gas price_lag12", "CO2 price_lag12"]
+# inputs of day D: only day-ahead forecasts
+targets = ["Spot", "forecast residual load", "AT forecast load", "AT forecast onshore wind", "AT forecast solar"]
+
+# the window of the LSTM, so that both forecast the same days; LightGBM itself uses the last 168 hours of it
+forecast_history = 192
+forecast_horizon = 24
+exclude_days = []
+
+# the mean forecast of one model per seed (they differ in the subsampled rows and columns)
+seeds = [1, 2, 3]

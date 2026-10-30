@@ -348,19 +348,37 @@ Lessons of phase 2 that the new start builds on:
 
   - **The fuel prices are the first choice of both models.** With them the neighbours' prices are no longer selected for LightGBM: on top of fuel and Austria they lower the mean by 0.13 but are better in only 2 of 4 folds. Both groups carry the price level of the coupled market, which is set by the same fuel costs, so they partly replace each other. Without fuel, the neighbours' prices were the strongest group (V4).
   - The best combination of 256 is better than the forward selection, but picking the best of many noisy candidates flatters it; the forward selection with its rule is the decision, as in V4.
-  - [ ] **P4c. LSTM** — **on Colab, next step** — `configs/lstm_v3.toml` (the LSTM of v2 on the v3 data), 3 seeds each:
-    1. base + fuel, the first choice of both models;
-    2. base + fuel + austria, the choice of LightGBM;
-    3. base + fuel + forecast_details, the choice of Ridge.
-    The reference is the LSTM of v2 with the base, which has the same data without fuel: 15.83 ± 0.21 (V5).
-  - [ ] **P4d. Combinations** of LightGBM, LSTM and Ridge with fixed equal weights, and tuning of the winner.
+  - [x] **P4c. LSTM** on Colab, `configs/lstm_v3.toml` (the LSTM of v2 on the v3 data), 3 seeds each, MAE on the validation year:
+
+| LSTM features | MAE, €/MWh | RMSE | best epoch |
+|---|---|---|---|
+| base (v2, the same data without fuel; V5) | 15.83 ± 0.21 | 30.56 | |
+| **base + fuel** | **15.13 ± 0.10** | 31.07 | 19 |
+| base + fuel + forecast_details | 15.38 ± 0.21 | 31.31 | 17 |
+| base + fuel + austria | 19.17 ± 0.78 | 34.43 | 19 |
+
+  - **Fuel passes the decision rule for the LSTM** (0.70 better, the spread of the seeds is 0.1 to 0.2) and is in `configs/lstm_v3.toml`. More groups make it worse; with the Austrian forecasts it fails as it did with the neighbours' prices in V5.
+  - LightGBM with the forward selection of P4b, `configs/lgbm_v3.toml` (base + austria + fuel, the settings of the feature selection), on the same validation year: seeds 13.94, 14.16, 13.94, their mean forecast **13.9** (RMSE 29.3); Ridge with the features of the LSTM 16.3. LightGBM stays ahead of the LSTM by 1.2. On this split it is as good as LightGBM of v2 before its tuning (13.9 as well): the gas price hardly moved in the validation year (31 to 47 €/MWh), so the fuel prices can show only a part of their value there.
+  - [ ] **P4d. Tuning and combinations.** First the tuning of LightGBM v3, so that the combination is decided with the final LightGBM, then on Colab its combinations with the LSTM seeds and Ridge.
+    - [x] **Tuning** of LightGBM v3 as in V6, locally (`python -m spotforecast.tune_lgbm --config lgbm_v3 --study lgbm_v3 --trials 60`, about 25 minutes, log `logs/tune_lgbm_v3.log`): the top is flat, the 5 best trials give 13.61 to 13.69 with 3 seeds against 13.86 with the settings of the feature selection; **no trial is 0.5 better with every seed, so `configs/lgbm_v3.toml` keeps them** (unlike v2, where the tuning gained 0.5). The best trials regularize more (leaves of 68 to 135 samples, L2 of 9 to 22, 280 to 500 trees), v2 went the other way; importance: leaves 0.29, column subsampling 0.19, L2 0.18.
+    - [ ] **Combinations** — **on Colab, next step** — LightGBM v3 alone, with Ridge, with the 3 LSTM seeds of `configs/lstm_v3.toml` and with both, fixed equal weights (`python -m spotforecast.evaluate --ensemble --config lstm_v3 --lgbm lgbm_v3`). Decision rule: a combination has to be at least 0.5 better than LightGBM alone (13.9).
 - [ ] **P5. Retraining** in the evaluation: a walk-forward over the validation year with monthly refits, as in the later live operation.
 - [ ] **P6. Final evaluation** on the test period, once.
 - [ ] **P7. Documentation of the method** (with the mathematics), figures, README.
 
 ## Colab runs of phase 3
 
-P4c, the three LSTM candidates of phase 3 with 3 seeds each (9 runs, about 20 to 45 minutes on the GPU). Push the code first. The fuel prices are not in the repository, so the cell downloads them first (`data/raw/fuel.parquet`, about a minute; it needs `data/raw/smard.parquet`, which comes with `git pull`):
+P4d, the combinations of LightGBM v3 with the LSTM seeds of `configs/lstm_v3.toml` and Ridge on the validation year (about 2 minutes; the LSTM models are on Drive, LightGBM is fitted in the cell). Push the code first; `fuel.parquet` is still in the Colab session if it was not restarted, otherwise the download line fetches it again:
+
+```python
+%cd /content/spotforecast
+!git pull
+!pip install -q -e .
+!python -m spotforecast.data.fuel
+!python -m spotforecast.evaluate --ensemble --config lstm_v3 --lgbm lgbm_v3
+```
+
+P4c (done), the three LSTM candidates of phase 3 with 3 seeds each (9 runs, about 20 to 45 minutes on the GPU). Push the code first. The fuel prices are not in the repository, so the cell downloads them first (`data/raw/fuel.parquet`, about a minute; it needs `data/raw/smard.parquet`, which comes with `git pull`):
 
 ```python
 %cd /content/spotforecast

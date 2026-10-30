@@ -1,7 +1,11 @@
 # Phase 3 (ROADMAP.md): the LSTM of model v2 on the data with the fuel prices. Everything else is that of
-# configs/lstm_v2.toml; the feature groups, among them the fuel prices, are added with
-# --selection feature_selection_v3 --groups ...
+# configs/lstm_v2.toml. The features are the winner of P4c: the base and the fuel group of
+# configs/feature_selection_v3.toml (15.13 EUR/MWh on the validation year with 3 seeds, against 15.83 without fuel);
+# with the Austrian forecasts or the single forecasts of load, wind and solar in addition it was worse.
 base = "lstm_v2"
 
 model_name = "energy_lstm_v3"
 data = "data_v3"
+
+# the gas price (TTF settlement of D-2) and the CO2 price (the last EUA auction before D-1), known at 12:00 on D-1
+features = ["Spot", "forecast residual load", "gas price_lag12", "CO2 price_lag12"]

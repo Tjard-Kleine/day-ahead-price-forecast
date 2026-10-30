@@ -1,12 +1,13 @@
-"""Hyperparameter search for LightGBM of model v2 with Optuna, step V6 of the roadmap.
+"""Hyperparameter search for LightGBM with Optuna, steps V6 (model v2) and P4d (phase 3) of the roadmap.
 
-Every trial fits LightGBM of configs/lgbm_v2.toml with sampled hyperparameters on the training split and returns its MAE
-on the validation year in EUR/MWh, the procedure of python -m spotforecast.final_v2 --dry-run. The trials are stored in
-logs/optuna_<study>.log, so an interrupted search continues when it is started again. One seed per trial, the seeds of
-LightGBM differ by only about 0.05 EUR/MWh; afterwards the best trials are confirmed with all seeds of the config, as
-the mean forecast of the final model.
+Every trial fits LightGBM of a config (configs/lgbm_v2.toml, configs/lgbm_v3.toml) with sampled hyperparameters on the
+training split and returns its MAE on the validation year in EUR/MWh, the procedure of
+python -m spotforecast.final_v2 --dry-run. The trials are stored in logs/optuna_<study>.log, so an interrupted search
+continues when it is started again. One seed per trial, the seeds of LightGBM differ by only about 0.05 EUR/MWh;
+afterwards the best trials are confirmed with all seeds of the config, as the mean forecast of the final model.
 
     python -m spotforecast.tune_lgbm --trials 60    # about 20 to 40 min on a laptop CPU
+    python -m spotforecast.tune_lgbm --config lgbm_v3 --study lgbm_v3 --trials 60
     python -m spotforecast.tune_lgbm --summary      # the best trials
     python -m spotforecast.tune_lgbm --confirm      # the best trials and the current config with all seeds
 """
@@ -125,12 +126,13 @@ def confirm(config: dict, w: dict, study_name: str, n_best: int=5) -> None:
     print(f"\nMAE on the validation year in EUR/MWh with the seeds {config['seeds']}:\n")
     print(table.round(2).to_string())
     for name, params in candidates.items():
-        print(f"\n{name}: [params] for configs/lgbm_v2.toml")
+        print(f"\n{name}: [params] for the LightGBM config")
         print("\n".join(f"{k} = {v!r}".replace("'", '"') for k, v in params.items()))
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Hyperparameter search for LightGBM of configs/lgbm_v2.toml with Optuna.")
+    parser = argparse.ArgumentParser(description="Hyperparameter search for LightGBM of a config in configs/ with "
+                                                 "Optuna.")
     parser.add_argument("--trials", type=int, default=60, help="number of finished trials of the study, including "
                                                                "earlier ones")
     parser.add_argument("--config", default="lgbm_v2", help="the LightGBM config in configs/")

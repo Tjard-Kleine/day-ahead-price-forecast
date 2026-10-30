@@ -69,7 +69,7 @@ def test_derived_features_need_their_sources():
 MEASURED_OR_FUEL = set(MEASURED) | set(FUEL_PRICES) | {"residual load"}  # residual load: computed from measured values
 
 
-@pytest.mark.parametrize("name", ["lstm_v2", "lgbm_v2", "lstm_v3"])
+@pytest.mark.parametrize("name", ["lstm_v2", "lgbm_v2", "lstm_v3", "lgbm_v3"])
 def test_v2_uses_only_what_is_known_at_noon_before_the_day(name):
     config = load_config(name)
     assert not MEASURED_OR_FUEL & set(config["features"]), "measured values must be shifted, e.g. <column>_lag12"
