@@ -80,6 +80,10 @@ downloads are kept in `raw/fuel/`.
 - **TTF instead of the German hub THE:** TTF is the European reference with a free daily history from 2018; the German
   price follows it closely. THE publishes its own daily reference price (VTP-Index) only from October 2021.
 - **Coal** is left out: there is no free daily source, and gas and CO₂ set the marginal price most of the time.
+- **Yahoo is not always complete:** on 2 November 2026 it returned only the last day of the TTF history. Every
+  download is therefore kept in `raw/fuel/` and combined with the earlier ones, and the command stops instead of writing
+  missing hours. On a machine without earlier downloads (e.g. Colab) copy a complete `raw/fuel.parquet` instead; the
+  same file everywhere also keeps all models on the same data.
 - The quarterly means show the driver of the price rise of 2026: the gas price doubled from 30 to 46 EUR/MWh
   (2025) to 63 (third quarter of 2026) and 85 (October 2026).
 

@@ -14,7 +14,7 @@ import pytest
 from spotforecast.config import PROJECT_ROOT, load_config
 from spotforecast.data.dataset import EnergyDataset, fit_trimmed_scaler, load_datasets
 from spotforecast.data.features import add_columns_, get_calendar_features, source_columns, with_derived_features
-from spotforecast.data.fuel import FUEL_PRICES, hourly
+from spotforecast.data.fuel import FUEL_PRICES, check_coverage, hourly
 from spotforecast.data.smard import MEASURED, NEIGHBOUR_PRICES
 from spotforecast.evaluate import diebold_mariano
 
@@ -89,6 +89,13 @@ def test_fuel_prices_are_known_from_the_next_day():
     hours = pd.Series(pd.date_range("2025-03-04", periods=48, freq="h", tz="Europe/Berlin"))
     values = hourly(daily, hours)
     assert (values[:24] == 10).all() and (values[24:] == 20).all()
+
+
+def test_fuel_prices_must_start_before_the_data():
+    hours = pd.Series(pd.date_range("2025-03-04", periods=24, freq="h", tz="Europe/Berlin"))
+    check_coverage(pd.Series([10.0], index=pd.to_datetime(["2025-03-03"]), name="gas price"), hours)
+    with pytest.raises(RuntimeError):  # e.g. a download that returned only the last day
+        check_coverage(pd.Series([10.0], index=pd.to_datetime(["2025-03-04"]), name="gas price"), hours)
 
 
 def test_a_config_extends_its_base():

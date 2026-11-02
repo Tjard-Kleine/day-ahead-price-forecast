@@ -314,7 +314,7 @@ Lessons of phase 2 that the new start builds on:
 
 ### Steps of phase 3
 
-- [x] **P1. Fuel prices.** `python -m spotforecast.data.fuel` downloads the TTF gas price (Yahoo Finance, from January 2018) and the EUA auction prices (EEX, from 2012) and writes them hourly to `data/raw/fuel.parquet` (not in the repository, see `data/README.md`). Every hour holds the price of an earlier day; models use them shifted by 12 hours (`gas price_lag12`, `CO2 price_lag12`), a test checks this for every v2/v3 config and the shift itself. No gaps from October 2018 to today. The quarterly means confirm the diagnosis of v2: the gas price doubled in 2026 (30 to 46 EUR/MWh in 2025, 85 in October 2026).
+- [x] **P1. Fuel prices.** `python -m spotforecast.data.fuel` downloads the TTF gas price (Yahoo Finance, from January 2018) and the EUA auction prices (EEX, from 2012) and writes them hourly to `data/raw/fuel.parquet` (not in the repository, see `data/README.md`). Every hour holds the price of an earlier day; models use them shifted by 12 hours (`gas price_lag12`, `CO2 price_lag12`), a test checks this for every v2/v3 config and the shift itself. No gaps from October 2018 to today. On 2 November 2026 Yahoo returned only the last day of the TTF history (also with `range=max`), probably after the change of the front month; since then every download is kept in `data/raw/fuel/` and combined with the earlier ones, and the module stops instead of writing a column with missing hours. The quarterly means confirm the diagnosis of v2: the gas price doubled in 2026 (30 to 46 EUR/MWh in 2025, 85 in October 2026).
 - [x] **P2. Pipeline.** `configs/data_v3.toml` extends `configs/data_smard.toml` (a config can name a `base` now) and joins `smard.parquet` and `fuel.parquet` (a data config can list several files). The splits are those of v2 (1989, 363 and 573 days).
 - [x] **P3. Weather: left out** (decision of the user on 2026-10-30), and the ENTSO-E data too; both are named in the method documentation as possible extensions. Adding a group later would not mean starting again: the feature selection only tests the new group on top of the current choice (minutes), the LSTM and the combination are checked once more on Colab. Reasons: no free source has realistic weather forecasts of 12:00 on D-1 for the whole training period: Open-Meteo's real forecasts with one day of lead time (Previous Runs API) start in January 2024, after the training split; its archived forecasts (Historical Forecast API, from 2021/2022) are stitched from the first hours of every model run, so they are close to measurements, not forecasts of the day before, and miss 2018 to 2021 (this corrects the plan of 2026-10-30 to use them). Realistic options: the measured weather (ERA5 reanalysis, all years) shifted by 12 hours, which adds little beyond the forecasts of the transmission system operators that already come from weather forecasts; or the day-ahead forecasts of the neighbouring countries and the power plant outages from ENTSO-E (needs a free token of the user).
 - [ ] **Publication times** (the research item of phase 2, partly answered): by the EU transparency regulation 543/2013 the day-ahead load forecast is published at the latest two hours before the gate closure of the day-ahead market (Art. 6: by 10:00 on D-1), the day-ahead wind and solar forecast at the latest at 18:00 on D-1 (Art. 14). The load forecast is therefore known at 12:00; the wind and solar forecasts on SMARD may be versions of up to 18:00, slightly better than those known at 12:00. The forecast residual load contains them. The method documentation has to state this limitation; the forecasts as of 12:00 are not freely available.
@@ -394,13 +394,16 @@ Lessons of phase 2 that the new start builds on:
 
 ## Colab runs of phase 3
 
-P5, the walk-forward over the validation year with all three models, fitted once and refitted every month (39 LSTM runs of the fixed number of epochs, about 1 to 2 hours on the GPU; LightGBM on the 2 CPU cores of Colab adds about 15 minutes). If Colab disconnects, run the cell again, it continues with the periods that are missing. Push the code first:
+P5, the walk-forward over the validation year with all three models, fitted once and refitted every month (39 LSTM runs of the fixed number of epochs, about 1 to 2 hours on the GPU; LightGBM on the 2 CPU cores of Colab adds about 15 minutes). If Colab disconnects, run the cell again, it continues with the periods that are missing.
+
+It needs a GPU runtime (Runtime → Change runtime type → T4 GPU); when the usage limit of Colab is reached, Colab only offers a CPU runtime, and the first line of the cell stops. The fuel prices are not downloaded on Colab but copied from Drive: on 2 November 2026 Yahoo returned only the last day of the TTF history, and the same file locally and on Colab keeps LightGBM and the LSTM on the same data. Upload `data/raw/fuel.parquet` once to `MyDrive/spotforecast/` and push the code first:
 
 ```python
+import torch; assert torch.cuda.is_available(), "no GPU runtime, the usage limit of Colab is probably reached"
 %cd /content/spotforecast
 !git pull
 !pip install -q -e .
-!python -m spotforecast.data.fuel
+!cp /content/drive/MyDrive/spotforecast/fuel.parquet data/raw/fuel.parquet
 for interval in ["none", "month"]:
     !python -m spotforecast.walk_forward --models lgbm lstm ridge --interval {interval}
 ```

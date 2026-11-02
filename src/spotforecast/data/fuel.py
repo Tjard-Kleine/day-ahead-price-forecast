@@ -43,18 +43,37 @@ def fetch(url: str) -> bytes:
         return response.read()
 
 
+def parse_ttf(raw: bytes) -> pd.Series:
+    """The daily settlements of a Yahoo Finance chart response by trading day."""
+    result = json.loads(raw)["chart"]["result"][0]
+    # the timestamps are the starts of the trading days in the time zone of the exchange
+    days = (pd.to_datetime(result.get("timestamp", []), unit="s", utc=True)
+            .tz_convert(result["meta"]["exchangeTimezoneName"]).tz_localize(None).normalize())
+    prices = pd.Series(result["indicators"]["quote"][0].get("close", []), index=days, dtype=float)
+    return prices.dropna().groupby(level=0).last()
+
+
 def download_ttf(start: str="2018-01-01") -> pd.Series:
-    """The daily settlement of the TTF front-month future by trading day, in EUR/MWh."""
+    """The daily settlement of the TTF front-month future by trading day, in EUR/MWh. Every download is kept in
+    data/raw/fuel/ and combined with the earlier ones, the newest value of a day wins: Yahoo sometimes returns only
+    the last days of the continuous future (e.g. on 2 November 2026, after the change of the front month), which would
+    otherwise lose the history."""
     url = TTF_URL.format(start=int(pd.Timestamp(start, tz="UTC").timestamp()),
                          end=int(pd.Timestamp.now(tz="UTC").timestamp()))
     raw = fetch(url)
-    (RAW_DIR / "ttf.json").write_bytes(raw)
-    result = json.loads(raw)["chart"]["result"][0]
-    # the timestamps are the starts of the trading days in the time zone of the exchange
-    days = (pd.to_datetime(result["timestamp"], unit="s", utc=True)
-            .tz_convert(result["meta"]["exchangeTimezoneName"]).tz_localize(None).normalize())
-    prices = pd.Series(result["indicators"]["quote"][0]["close"], index=days, dtype=float)
-    return prices.dropna().groupby(level=0).last().rename("gas price")
+    saved = [parse_ttf(path.read_bytes()) for path in sorted(RAW_DIR.glob("ttf*.json"))]
+    (RAW_DIR / f"ttf_{pd.Timestamp.now():%Y%m%d}.json").write_bytes(raw)
+    prices = pd.concat(saved + [parse_ttf(raw)])
+    return prices.groupby(level=0).last().rename("gas price")
+
+
+def check_coverage(daily: pd.Series, hours: pd.Series) -> None:
+    """Stops before a column with missing hours is written: the prices must start before the first hour."""
+    first_day = hours.min().tz_localize(None).normalize()
+    if daily.empty or daily.index.min() >= first_day:
+        start = "is empty" if daily.empty else f"starts only on {daily.index.min():%Y-%m-%d}"
+        raise RuntimeError(f"The download of the {daily.name} {start}, the data starts on {first_day:%Y-%m-%d}. "
+                           f"Try again later, or copy a complete data/raw/fuel.parquet, e.g. from another machine.")
 
 
 def read_eua_report(content: bytes) -> pd.DataFrame:
@@ -109,9 +128,13 @@ def main():
     print("Downloading the EUA auction results from EEX...")
     co2 = download_eua()
     print(f"  {len(co2)} auction days, {co2.index.min():%Y-%m-%d} to {co2.index.max():%Y-%m-%d}")
+    for daily in [gas, co2]:
+        check_coverage(daily, hours)
     data = pd.concat([hours] + [hourly(daily, hours) for daily in [gas, co2]], axis=1)[["Date"] + FUEL_PRICES]
+    if data.isna().any().any():
+        raise RuntimeError(f"Missing hours, nothing written: {data.isna().sum().drop('Date').to_dict()}")
     data.to_parquet(args.output)
-    print(f"{len(data)} hours written to {args.output}; missing: {data.isna().sum().drop('Date').to_dict()}")
+    print(f"{len(data)} hours written to {args.output}, no missing values")
 
 
 if __name__ == '__main__':
