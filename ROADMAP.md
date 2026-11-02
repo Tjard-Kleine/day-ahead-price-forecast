@@ -387,14 +387,45 @@ Lessons of phase 2 that the new start builds on:
 | every month | **13.39** | **15.69** |
 
     Monthly refits help both models (LightGBM −0.47, Ridge −0.61), most in the second and third quarter of 2024 (LightGBM 12.1 → 11.4 in Q2); in the first quarter of 2025 LightGBM is worse with monthly refits (13.2 → 14.0), its models of January to March have the Dunkelflaute of November and December 2024 in their training data. LightGBM alone stays just under the 0.5 of the decision rule; the decision is taken for model v3 with the LSTM.
-  - [ ] On Colab: all three models fitted once and refitted every month (39 LSTM runs, about 1 to 2 hours), for model v3 with and without retraining.
-  - Decision: which interval the final evaluation uses; a refit has to pay with at least 0.5 €/MWh, otherwise the model is fitted once.
-- [ ] **P6. Final evaluation** on the test period, once.
+  - [x] On Colab: all three models fitted once and refitted every month (the LSTM 19 epochs, the median best epoch of its three validation runs), MAE on the validation year in €/MWh:
+
+| Refitted | LightGBM | LSTM | Ridge | **model v3** |
+|---|---|---|---|---|
+| never (once, before the year) | 13.86 | 15.76 | 16.30 | 13.50 |
+| every month | 13.39 | 14.42 | 15.69 | **12.74** |
+
+  - **Decision: the final evaluation refits every month.** Model v3 gains 0.76 (decision rule 0.5), the LSTM most (−1.34). In the first quarter of 2025 LightGBM is worse with refits (14.0 against 13.2), the LSTM better (13.5 against 14.7), together still better (12.3 against 12.6).
+  - **The LSTM with a fixed number of epochs is 0.9 worse than in P4d** (15.76 against 14.9): there, early stopping chose the best epoch on the validation year itself, which flatters the number; besides, the learning rate schedule follows the training loss without a validation split. The honest number of the LSTM is the one without early stopping on the evaluated data. Model v3 without refits is therefore only 0.36 better than LightGBM alone, less than the rule; with monthly refits, the procedure of the final evaluation, it is 0.65 better (12.74 against 13.39), so the combination of P4d holds.
+- [ ] **P6. Final evaluation** on the test period, once, with the procedure of P5: `python -m spotforecast.final_v3` runs the walk-forward of model v3 with monthly refits on the test period (19 months, 57 LSTM runs, on Colab) and writes `reports/test_results_v3.md` (errors of day D-1, Ridge, LightGBM, LSTM and model v3, per block of hours and per quarter, the bias per quarter, Diebold-Mariano tests; it states that the test period was used before for v2 and the limitation of the publication times). With the report present it only shows it. `walk_forward` now also keeps the prices of day D-1 as the naive reference.
+  - [ ] **Dry run** on Colab (`--dry-run`, the validation year from the saved forecasts of P5, no GPU needed); locally the report was checked with a stand-in for the LSTM.
+  - [ ] **The single test evaluation** on Colab with a GPU, after the dry run.
 - [ ] **P7. Documentation of the method** (with the mathematics), figures, README.
 
 ## Colab runs of phase 3
 
-P5, the walk-forward over the validation year with all three models, fitted once and refitted every month (39 LSTM runs of the fixed number of epochs, about 1 to 2 hours on the GPU; LightGBM on the 2 CPU cores of Colab adds about 15 minutes). If Colab disconnects, run the cell again, it continues with the periods that are missing.
+P6, first the dry run on the validation year. It uses the saved forecasts of P5 (`logs/walk_forward/val_month/` on Drive) and only adds the prices of day D-1, so a CPU runtime is enough (about 2 minutes). Push the code first:
+
+```python
+%cd /content/spotforecast
+!git pull
+!pip install -q -e .
+!cp /content/drive/MyDrive/spotforecast/fuel.parquet data/raw/fuel.parquet
+!python -m spotforecast.final_v3 --dry-run
+```
+
+Then, after the dry run was checked, the single evaluation on the test period with a GPU runtime (57 LSTM runs, about 2 to 3 hours; if Colab disconnects, run the cell again, it continues with the missing months). The report is written into the Colab clone, which is not on Drive, so the last line copies it to Drive; from there it goes into the repository:
+
+```python
+import torch; assert torch.cuda.is_available(), "no GPU runtime, the usage limit of Colab is probably reached"
+%cd /content/spotforecast
+!git pull
+!pip install -q -e .
+!cp /content/drive/MyDrive/spotforecast/fuel.parquet data/raw/fuel.parquet
+!python -m spotforecast.final_v3
+!cp reports/test_results_v3.md /content/drive/MyDrive/spotforecast/
+```
+
+P5 (done), the walk-forward over the validation year with all three models, fitted once and refitted every month (39 LSTM runs of the fixed number of epochs, about 1 to 2 hours on the GPU; LightGBM on the 2 CPU cores of Colab adds about 15 minutes). If Colab disconnects, run the cell again, it continues with the periods that are missing.
 
 It needs a GPU runtime (Runtime → Change runtime type → T4 GPU); when the usage limit of Colab is reached, Colab only offers a CPU runtime, and the first line of the cell stops. The fuel prices are not downloaded on Colab but copied from Drive: on 2 November 2026 Yahoo returned only the last day of the TTF history, and the same file locally and on Colab keeps LightGBM and the LSTM on the same data. Upload `data/raw/fuel.parquet` once to `MyDrive/spotforecast/` and push the code first:
 
