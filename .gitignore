@@ -21,6 +21,8 @@ models/*
 !models/final/
 # and the final LightGBM models of model v2 (python -m spotforecast.final_v2)
 !models/final_v2/
+# and model v3 trained on all days, for live forecasts (python -m spotforecast.final_v3 --export)
+!models/final_v3/
 logs/
 
 # editors / OS

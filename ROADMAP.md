@@ -398,12 +398,46 @@ Lessons of phase 2 that the new start builds on:
   - **The LSTM with a fixed number of epochs is 0.9 worse than in P4d** (15.76 against 14.9): there, early stopping chose the best epoch on the validation year itself, which flatters the number; besides, the learning rate schedule follows the training loss without a validation split. The honest number of the LSTM is the one without early stopping on the evaluated data. Model v3 without refits is therefore only 0.36 better than LightGBM alone, less than the rule; with monthly refits, the procedure of the final evaluation, it is 0.65 better (12.74 against 13.39), so the combination of P4d holds.
 - [ ] **P6. Final evaluation** on the test period, once, with the procedure of P5: `python -m spotforecast.final_v3` runs the walk-forward of model v3 with monthly refits on the test period (19 months, 57 LSTM runs, on Colab) and writes `reports/test_results_v3.md` (errors of day D-1, Ridge, LightGBM, LSTM and model v3, per block of hours and per quarter, the bias per quarter, Diebold-Mariano tests; it states that the test period was used before for v2 and the limitation of the publication times). With the report present it only shows it. `walk_forward` now also keeps the prices of day D-1 as the naive reference.
   - [x] **Dry run** on Colab (`--dry-run`, the validation year from the saved forecasts of P5): model v3 12.7 (RMSE 27.8, bias −1.6), LightGBM 13.4, LSTM 14.4, Ridge 15.7, day D-1 31.1, exactly the numbers of P5; Diebold-Mariano of model v3 against LightGBM −3.39 (p = 0.0003), against Ridge −7.40. The Dunkelflaute quarter (Q4 2024) is the weak spot: MAE 15.8, bias −8.5, all models forecast too low. The note "changes that were not committed" in the report came from Colab's links of `models/` and `logs/` to Drive; the commit note now only looks at `src/`, `configs/` and `pyproject.toml`.
-  - [ ] **The single test evaluation** on Colab with a GPU.
+  - [x] **The single test evaluation** (2026-11-02, Colab with a GPU, about one hour, commit 1906e0c, `reports/test_results_v3.md`): 1 April 2025 to 28 October 2026, 573 days, 19 monthly refits. The test period is used up.
+
+| Test period, €/MWh | MAE | RMSE | median AE | bias |
+|---|---|---|---|---|
+| day D-1 | 29.0 | 45.4 | 16.4 | −0.3 |
+| Ridge | 16.1 | 26.1 | 11.0 | −0.8 |
+| LightGBM | 14.7 | 24.4 | 9.6 | −4.2 |
+| LSTM | 14.9 | 25.6 | 9.9 | −0.7 |
+| **model v3** | **13.5** | **23.3** | **8.9** | −2.4 |
+
+| MAE per quarter | 2025 Q2 | Q3 | Q4 | 2026 Q1 | Q2 | Q3 | Q4 (27 days) |
+|---|---|---|---|---|---|---|---|
+| model v3 | 12.8 | 12.2 | 10.6 | 10.8 | 16.6 | 16.2 | 18.9 |
+| bias of LightGBM | 0.2 | −4.5 | 0.7 | −2.3 | −5.0 | −10.1 | −17.1 |
+| bias of the LSTM | 2.9 | −3.3 | −6.1 | 0.2 | 4.0 | −0.6 | −5.0 |
+
+  - **Model v3 is significantly better than each of its parts** (Diebold-Mariano against LightGBM −7.2, LSTM −8.8, Ridge −10.0, all p < 0.0001), and as good on the test period as on the validation year (13.5 against 12.7).
+  - **The price rise of 2026 no longer breaks the forecast**: model v3 has an MAE of 16 to 19 in the second half of 2026, when the price rose to 163 €/MWh; the error grows with the price level and its volatility (day D-1: 33 to 48). v2 had 29 and 40 there.
+  - **LightGBM still falls behind a rising level** despite the fuel prices and the monthly refits: its bias reaches −10 and −17 in the last two quarters. **The LSTM stays almost unbiased** (−0.6 and −5.0): it forecasts the change against the last known price (the residual anchor of its output layer), so it carries a new level forward, like Ridge, which is linear in the prices of D-1. A tree only outputs means of training targets. This is the reason why the combination works: LightGBM is more accurate in a stable market, the LSTM keeps the level.
+  - [ ] **The model for live forecasts** (decision of the user: build it now): `python -m spotforecast.final_v3 --export` trains LightGBM and the LSTM with the seeds 1 to 3 once on all days of the data (2925 days, October 2018 to 28 October 2026), the next monthly refit of live operation, and saves them to `models/final_v3/` (LSTM weights without optimizer state with config and feature dimensions, LightGBM trees, the training end in the JSON files; about 20 MB, in the repository like the models of v1 and v2). Only after the test, it trains on the test period. Checked locally with one seed and one epoch: the LSTM is rebuilt by `load_run`, LightGBM has its 300 trees. Its forecasts of days it was trained on are no evaluation; the honest forecasts of the test period are those of the walk-forward.
 - [ ] **P7. Documentation of the method** (with the mathematics), figures, README.
+  - A results notebook `notebooks/05_results_v3.ipynb` makes the figures from the walk-forward forecasts (`logs/walk_forward/test_month.csv`, `val_month.csv`; every month forecast by models that had not seen it): forecasts against the actual prices in example weeks, error and bias per month with the price level, error per hour of the day; and from the final model what it can show honestly, e.g. which inputs LightGBM uses most.
+  - `docs/method.md`: the task and the information set, the data and its timing, the evaluation (splits, decision rules, walk-forward, Diebold-Mariano, the reuse of the test period), the models with their mathematics, what worked and why, the limits and possible extensions (no comparison tables of the model versions).
+  - The README as a short entry with a link to the method.
 
 ## Colab runs of phase 3
 
-P6, first the dry run on the validation year. It uses the saved forecasts of P5 (`logs/walk_forward/val_month/` on Drive) and only adds the prices of day D-1, so a CPU runtime is enough (about 2 minutes). Push the code first:
+The model for live forecasts, after the test (about 10 minutes with a GPU). Commit `reports/test_results_v3.md` first and push, the export only runs when the report is there. The last line copies the models and the forecasts of the walk-forward to Drive; from there `final_v3/` goes to `models/final_v3/` (commit it), the two CSV files to `logs/walk_forward/`:
+
+```python
+import torch; assert torch.cuda.is_available(), "no GPU runtime, the usage limit of Colab is probably reached"
+%cd /content/spotforecast
+!git pull
+!pip install -q -e .
+!cp /content/drive/MyDrive/spotforecast/fuel.parquet data/raw/fuel.parquet
+!python -m spotforecast.final_v3 --export
+!cp -r models/final_v3 logs/walk_forward/test_month.csv logs/walk_forward/val_month.csv /content/drive/MyDrive/spotforecast/
+```
+
+P6 (done), first the dry run on the validation year. It uses the saved forecasts of P5 (`logs/walk_forward/val_month/` on Drive) and only adds the prices of day D-1, so a CPU runtime is enough (about 2 minutes). Push the code first:
 
 ```python
 %cd /content/spotforecast

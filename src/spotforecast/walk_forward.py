@@ -89,23 +89,32 @@ def collect(directory: Path, starts: list[pd.Timestamp]) -> pd.DataFrame:
     return table
 
 
-def run(config: dict, lgbm_config: dict, split: str, interval: str, models: list[str],
-        epochs: Optional[int]=None) -> pd.DataFrame:
-    """Fits and forecasts every period of the split that is not saved yet for the models (and the naive reference),
-    then returns the table of collect, which is also written to logs/walk_forward/<split>_<interval>.csv."""
-    data_config = load_data_config(config)
+def load_frame(configs: dict[str, dict]) -> tuple[pd.DataFrame, dict]:
+    """The preprocessed hourly data with the columns of all model configs, which share one data config, and the
+    preprocessing settings of that data config (with the split cutoffs) plus "end", the day after the last hour."""
+    data_config = load_data_config(next(iter(configs.values())))
     kwargs = dict(data_config["preprocessing"])
-    valid_cutoff, test_cutoff = kwargs.pop("valid_cutoff_datetime"), kwargs.pop("test_cutoff_datetime")
-    datetime_col = kwargs.get("datetime_col", "Date")
-    configs = {"lstm": config, "lgbm": lgbm_config}  # Ridge and the naive reference use the data of the LSTM
+    cutoffs = {key: kwargs.pop(key) for key in ["valid_cutoff_datetime", "test_cutoff_datetime"]}
     print("Loading the data...", flush=True)
     with contextlib.redirect_stdout(io.StringIO()):  # the preprocessing log is long
         df = load_preprocessed_data(data_paths(data_config),
                                     list(dict.fromkeys(c for cfg in configs.values()
                                                        for c in cfg["features"] + cfg["targets"])), kwargs)
-    last_day = pd.Timestamp(df[datetime_col].max()).tz_localize(None).normalize() + pd.Timedelta(days=1)
+    datetime_col = kwargs.get("datetime_col", "Date")
+    end = pd.Timestamp(df[datetime_col].max()).tz_localize(None).normalize() + pd.Timedelta(days=1)
+    return df, {**kwargs, **cutoffs, "datetime_col": datetime_col, "end": end}
+
+
+def run(config: dict, lgbm_config: dict, split: str, interval: str, models: list[str],
+        epochs: Optional[int]=None) -> pd.DataFrame:
+    """Fits and forecasts every period of the split that is not saved yet for the models (and the naive reference),
+    then returns the table of collect, which is also written to logs/walk_forward/<split>_<interval>.csv."""
+    configs = {"lstm": config, "lgbm": lgbm_config}  # Ridge and the naive reference use the data of the LSTM
+    df, settings = load_frame(configs)
+    datetime_col = settings["datetime_col"]
+    valid_cutoff, test_cutoff = settings["valid_cutoff_datetime"], settings["test_cutoff_datetime"]
     start, end = (pd.Timestamp(valid_cutoff), pd.Timestamp(test_cutoff)) if split == "val" else \
-        (pd.Timestamp(test_cutoff), last_day)
+        (pd.Timestamp(test_cutoff), settings["end"])
     split_periods = periods(start, end, interval)
     directory = OUTPUT_DIR / f"{split}_{interval}"
     directory.mkdir(parents=True, exist_ok=True)

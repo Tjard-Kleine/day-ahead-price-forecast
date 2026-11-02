@@ -6,22 +6,37 @@ fixed number of epochs (python -m spotforecast.walk_forward). The LSTM needs a G
 interrupted run continues with the months that are missing. The results are written to reports/test_results_v3.md.
 The test period is evaluated only once: when that file exists, the command only shows it.
 
+After the test, --export trains model v3 once on all days of the data, the next monthly refit of live operation, and
+saves it to models/final_v3/. Its forecasts of days it was trained on are not an evaluation: the honest forecasts of the
+test period are those of the walk-forward in logs/walk_forward/test_month.csv.
+
     python -m spotforecast.final_v3 --dry-run    # the report of the same procedure on the validation year
     python -m spotforecast.final_v3              # once, at the very end
+    python -m spotforecast.final_v3 --export     # the model for live forecasts, on Colab (about 10 minutes)
 """
 import argparse
+import contextlib
+import copy
+import io
+import json
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import torch
 
 from spotforecast.config import PROJECT_ROOT, load_config
-from spotforecast.evaluate import HORIZON_BLOCKS, diebold_mariano
+from spotforecast.data.dataset import build_datasets, get_feature_dims
+from spotforecast.evaluate import HORIZON_BLOCKS, MODEL_DIR, diebold_mariano
 from spotforecast.final import final_epochs, markdown_table
 from spotforecast.final_v2 import commit_note
-from spotforecast.walk_forward import run
+from spotforecast.models.baselines import fit_lgbm, stack_windows
+from spotforecast.train import train
+from spotforecast.walk_forward import SEEDS, load_frame, run
 
 RESULTS = PROJECT_ROOT / "reports" / "test_results_v3.md"
+# not models/final/ and models/final_v2/, which hold the models of v1 and v2
+FINAL_DIR = MODEL_DIR / "final_v3"
 # the columns of walk_forward.collect and their names in the report
 FORECASTS = {"naive": "day D-1", "ridge": "ridge", "lgbm": "lightgbm", "lstm": "lstm", "v3": "model v3"}
 
@@ -99,14 +114,57 @@ model v3 is more accurate):
 """
 
 
+def export(config: dict, lgbm_config: dict, epochs: int) -> None:
+    """Trains LightGBM and the LSTM with every seed on all days of the data and saves them to models/final_v3/: the
+    LSTM weights without optimizer state, with their config and feature dimensions (spotforecast.evaluate.load_run
+    rebuilds them), and the LightGBM trees. The scaling is not stored, it is refitted on the same days ("trained_until"
+    in the JSON files), which gives the same numbers."""
+    df, settings = load_frame({"lstm": config, "lgbm": lgbm_config})
+    until = f"{settings['end']:%Y-%m-%d %H:%M:%S}"
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    FINAL_DIR.mkdir(parents=True, exist_ok=True)
+    for name, cfg in [("lgbm", lgbm_config), ("lstm", config)]:
+        # both cutoffs at the end of the data: every complete day is a training day
+        train_ds, _, _ = build_datasets(df, cfg["features"], cfg["targets"], cfg["forecast_history"],
+                                        cfg["forecast_horizon"], settings["datetime_col"], until, until,
+                                        cfg.get("exclude_days", []))
+        days = train_ds.forecast_starts()
+        print(f"{name}: training on {len(train_ds)} days, {days[0]:%Y-%m-%d} to {days[-1]:%Y-%m-%d}, device {device}",
+              flush=True)
+        for seed in SEEDS:
+            path = FINAL_DIR / f"final_{cfg['model_name']}_seed{seed}"
+            if name == "lgbm":
+                X, Y = stack_windows(train_ds)
+                fit_lgbm(X, Y, seed, **cfg.get("params", {})).booster_.save_model(str(path.with_suffix(".txt")))
+                info = {"config": cfg, "seed": seed}
+            else:
+                seed_config = copy.deepcopy(cfg)
+                seed_config.update(seed=seed, epochs=epochs, early_stopping_patience=0)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    model, _ = train(seed_config, train_ds, None, device, path.with_suffix(".pth"))
+                torch.save(model.state_dict(), path.with_suffix(".pth"))  # without the optimizer state
+                info = {"config": seed_config, "feature_dims": list(get_feature_dims(train_ds))}
+            with open(path.with_suffix(".json"), "w") as f:
+                json.dump({**info, "trained_until": until, "last_day": f"{days[-1]:%Y-%m-%d}"}, f, indent=2)
+            print(f"  seed {seed} saved to {path.relative_to(PROJECT_ROOT)}", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description="The single evaluation of model v3 on the test period.")
     parser.add_argument("--dry-run", action="store_true",
                         help="the same procedure on the validation year, the test period is not touched and nothing "
                              "is written to reports/")
     parser.add_argument("--force", action="store_true", help="evaluate the test period again although it already was")
+    parser.add_argument("--export", action="store_true", help="after the test: train model v3 on all days and save "
+                                                              "it to models/final_v3/")
     args = parser.parse_args()
 
+    if args.export:
+        if not RESULTS.exists():
+            parser.error("the model is exported after the test, the export trains on the test period")
+        config = load_config("lstm_v3")
+        export(config, load_config("lgbm_v3"), final_epochs(config))
+        return
     if not args.dry_run and RESULTS.exists() and not args.force:
         print(f"The test period was already evaluated, these are the results of {RESULTS.relative_to(PROJECT_ROOT)}:\n")
         print(RESULTS.read_text(encoding="utf-8"))
