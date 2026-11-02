@@ -47,13 +47,15 @@ def quarterly_mae(forecasts: dict[str, np.ndarray], y: np.ndarray, ds: EnergyDat
 
 
 def commit_note() -> str:
-    """The checked out commit, marked when the working tree has changes that are not committed."""
+    """The checked out commit, marked when the code or the configs have changes that are not committed. Other changes
+    do not change the results, e.g. on Colab the folders models/ and logs/ are links to Drive."""
     try:
-        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=PROJECT_ROOT,
-                               capture_output=True, text=True).stdout.strip()
+        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no", "--", "src", "configs",
+                                "pyproject.toml"], cwd=PROJECT_ROOT, capture_output=True, text=True).stdout.strip()
     except OSError:
         dirty = ""
-    return (git_commit() or "unknown") + (" with changes that were not committed yet" if dirty else "")
+    return (git_commit() or "unknown") + (" with changes to the code or configs that were not committed yet"
+                                          if dirty else "")
 
 
 def main():
